@@ -124,6 +124,9 @@ def get_ceph_info(handle, ceph_config, timeout):
     cluster['status'] = ceph_mon_command(handle,
                                          'status', timeout)
     cluster['version'] = shell_command('ceph -v') + b'\n'
+
+    cluster['versions'] = shell_command('ceph versions') + b'\n'
+
     cluster['fsid'] = str(handle.get_fsid()) + b'\n'
 
     with open(ceph_config, 'r') as f:

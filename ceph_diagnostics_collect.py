@@ -20,7 +20,7 @@ mds: dump, stat, getmap
 
 """
 
-__author__ = "Pooja Kulkarni"
+__author__ = ""
 __copyright__ = "Copyright (C) 2019 Clyso GmbH"
 __credits__ = []
 __license__ = ""
@@ -46,7 +46,7 @@ CEPH_TIMEOUT = 10
 # Set up logging for the script
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 LOGGER = logging.getLogger()
-LOGGER.setLevel(logging.DEBUG) #parameterize
+LOGGER.setLevel(logging.INFO) #parameterize
 
 
 def connect(ceph_config_file, timeout = CEPH_TIMEOUT):
@@ -74,12 +74,12 @@ def shell_command(command, shell=True):
     :param command: command to execute
     :return: result of the command
     """
-    p = subprocess.Popen(command,
-                         stdout=subprocess.PIPE,
-
-                         shell=shell)
+    p = subprocess.Popen(command, stdout=subprocess.PIPE, shell=shell)
     result = p.communicate()[0]
-    return str(result.strip())
+    if result == "command not known":
+        LOGGER.info("command not known " + err)
+
+    return result.strip()
 
 
 def ceph_mon_command(handle, command, timeout):
@@ -91,10 +91,11 @@ def ceph_mon_command(handle, command, timeout):
     :return: command result
     """
     cmd = {'prefix': command}
-    ret, buf, err = handle.mon_command(json.dumps(cmd), b'',
-                                       timeout=timeout)
+    ret, buf, err = handle.mon_command(json.dumps(cmd), b'', timeout=timeout)
+    if err == "command not known":
+        LOGGER.info("command not known " + err)
 
-    return str(buf)
+    return buf
 
 
 def get_system_info():
@@ -105,9 +106,15 @@ def get_system_info():
     system = dict()
 
     system['uname'] = shell_command('uname -a') + b'\n'
-    system['lsb_release'] = shell_command('lsb_release -a') + b'\n'
+
+    # TODO verify if lsb_release packages installed -> DONE
+    res = str(shell_command('dpkg -l | grep lsb').decode('utf-8'))
+    if "lsb-release" in res:
+        system['lsb_release'] = shell_command('lsb_release -a') + b'\n'
 
     # More information can be added here later on
+
+    print(system)
     return system
 
 
@@ -125,14 +132,22 @@ def get_ceph_info(handle, ceph_config, timeout):
                                          'status', timeout)
     cluster['version'] = shell_command('ceph -v') + b'\n'
 
-    cluster['versions'] = shell_command('ceph versions') + b'\n'
+    # ceph versions command was introduced in mimic
+    version = cluster['version']
+    version = str(version.decode('utf-8')).split(' ')[2].split(".")[0]
 
-    cluster['fsid'] = str(handle.get_fsid()) + b'\n'
+    if int(version) >= 13:
+        cluster['versions'] = shell_command('ceph versions') + b'\n'
+
+
+    fsid = handle.get_fsid() + '\n'
+    cluster['fsid'] = str.encode(fsid)
 
     with open(ceph_config, 'r') as f:
         ceph_conf = f.read()
 
-    cluster['ceph_conf'] = str(ceph_conf)
+    cephconf = str(ceph_conf)
+    cluster['ceph_conf'] = str.encode(cephconf)
 
     return cluster
 
@@ -146,11 +161,12 @@ def get_health_info(handle, timeout):
     """
     health = dict()
 
-    health['stat'] = ceph_mon_command(handle, 'health', timeout)
-    health['detail'] = ceph_mon_command(handle,
-                                        'health detail', timeout)
-    health['df'] = ceph_mon_command(handle, 'df', timeout)
-    health['report'] = ceph_mon_command(handle, 'report', timeout)
+    health['stat']   = ceph_mon_command(handle, 'health'       , timeout)
+    # TODO command not known with ceph_mon_command
+    #health['detail'] = ceph_mon_command(handle, 'health detail', timeout)
+    health['detail'] = shell_command('ceph health detail') + b'\n'
+    health['df']     = ceph_mon_command(handle, 'df'           , timeout)
+    health['report'] = ceph_mon_command(handle, 'report'       , timeout)
 
     return health
 
@@ -163,13 +179,39 @@ def get_monitor_info(handle, timeout):
     :return:
     """
     mon_info = dict()
-    mon_info['stat'] = ceph_mon_command(handle, 'mon stat', timeout)
-    mon_info['dump'] = ceph_mon_command(handle, 'mon dump', timeout)
-    mon_info['map'] = ceph_mon_command(handle, 'mon getmap', timeout)
-    mon_info['metadata'] = ceph_mon_command(handle,
-                                            'mon metadata', timeout)
+    mon_info['stat']     = ceph_mon_command(handle, 'mon stat'    , timeout)
+    mon_info['dump']     = ceph_mon_command(handle, 'mon dump'    , timeout)
+    mon_info['map']      = ceph_mon_command(handle, 'mon getmap'  , timeout)
+    mon_info['metadata'] = ceph_mon_command(handle, 'mon metadata', timeout)
     return mon_info
 
+
+def get_device_info(handle, timeout):
+    """
+    GAther ceph device information
+    :param handle: cluster handle
+    :param timeout: timeout for the command execution
+    :return:
+    """
+    device_info = dict()
+    device_info['ls'] = ceph_mon_command(handle, 'device ls', timeout)
+
+    return device_info
+
+
+def get_manager_info(handle, timeout):
+    """
+    Gather ceph manager information
+    :param handle: cluster handle
+    :param timeout: timeout for the command execution
+    :return:
+    """
+    mgr_info = dict()
+    mgr_info['ls-modules'] = ceph_mon_command(handle, 'mgr module ls', timeout)
+    mgr_info['dump']       = ceph_mon_command(handle, 'mgr dump'     , timeout)
+    mgr_info['metadata']   = ceph_mon_command(handle, 'mgr metadata' , timeout)
+    return mgr_info
+    
 
 def get_osd_info(handle, timeout):
     """
@@ -179,18 +221,14 @@ def get_osd_info(handle, timeout):
     :return:
     """
     osd_info = dict()
-    osd_info['tree'] = ceph_mon_command(handle, 'osd tree', timeout)
-    osd_info['df'] = ceph_mon_command(handle, 'osd df', timeout)
-    osd_info['dump'] = ceph_mon_command(handle, 'osd dump', timeout)
-    osd_info['stat'] = ceph_mon_command(handle,
-                                        'osd stat', timeout)
-    osd_info['crushmap'] = ceph_mon_command(handle,
-                                            'osd getcrushmap', timeout)
-    osd_info['map'] = ceph_mon_command(handle,
-                                       'osd getmap', timeout)
-    osd_info['metadata'] = ceph_mon_command(handle,
-                                            'osd metadata', timeout)
-    osd_info['perf'] = ceph_mon_command(handle, 'osd perf', timeout)
+    osd_info['tree']     = ceph_mon_command(handle, 'osd tree'       , timeout)
+    osd_info['df']       = ceph_mon_command(handle, 'osd df'         , timeout)
+    osd_info['dump']     = ceph_mon_command(handle, 'osd dump'       , timeout)
+    osd_info['stat']     = ceph_mon_command(handle, 'osd stat'       , timeout)
+    osd_info['crushmap'] = ceph_mon_command(handle, 'osd getcrushmap', timeout)
+    osd_info['map']      = ceph_mon_command(handle, 'osd getmap'     , timeout)
+    osd_info['metadata'] = ceph_mon_command(handle, 'osd metadata'   , timeout)
+    osd_info['perf']     = ceph_mon_command(handle, 'osd perf'       , timeout)
     return osd_info
 
 
@@ -202,10 +240,9 @@ def get_pg_info(handle, timeout):
     :return:
     """
     pg_info = dict()
-    pg_info['stat'] = ceph_mon_command(handle, 'pg stat', timeout)
-    pg_info['dump'] = ceph_mon_command(handle, 'pg dump', timeout)
-    pg_info['dump_stuck'] = ceph_mon_command(handle,
-                                             'pg dump_stuck', timeout)
+    pg_info['stat']       = ceph_mon_command(handle, 'pg stat'      , timeout)
+    pg_info['dump']       = ceph_mon_command(handle, 'pg dump'      , timeout)
+    pg_info['dump_stuck'] = ceph_mon_command(handle, 'pg dump_stuck', timeout)
     return pg_info
 
 
@@ -217,9 +254,9 @@ def get_mds_info(handle, timeout):
     :return:
     """
     mds_info = dict()
-    mds_info['dump'] = ceph_mon_command(handle, 'mds dump', timeout)
-    mds_info['stat'] = ceph_mon_command(handle, 'mds stat', timeout)
-    mds_info['map'] = ceph_mon_command(handle, 'mds getmap', timeout)
+    mds_info['dump'] = ceph_mon_command(handle, 'mds dump'  , timeout)
+    mds_info['stat'] = ceph_mon_command(handle, 'mds stat'  , timeout)
+    mds_info['map']  = ceph_mon_command(handle, 'mds getmap', timeout)
     return mds_info
 
 
@@ -245,6 +282,7 @@ def dict_to_files(result_dict, dest_dir):
                                            "-" + contentname)
 
                 LOGGER.debug('Writing file %s', tmpfile)
+                print('Writing file %s', tmpfile)
                 with open(tmpfile, 'wb') as f:
                     f.write(contentdata)
                 f.close()
@@ -277,15 +315,19 @@ def diagnostic_data_collect(handle,
     result_dict['system_info'] = get_system_info()
 
     LOGGER.info("Collecting Ceph cluster information")
-    result_dict['ceph_cluster_info'] = get_ceph_info(handle,
-                                                     ceph_config,
-                                                     timeout)
+    result_dict['ceph_cluster_info'] = get_ceph_info(handle, ceph_config, timeout)
 
     LOGGER.info("Collecting Ceph cluster : health information")
     result_dict['cluster_health'] = get_health_info(handle, timeout)
 
     LOGGER.info("Collecting Ceph cluster : monitor information")
     result_dict['monitor_info'] = get_monitor_info(handle, timeout)
+
+    LOGGER.info("Collecting Ceph cluster : device information")
+    result_dict['device_info'] = get_device_info(handle, timeout)
+
+    LOGGER.info("Collecting Ceph cluster : manager information")
+    result_dict['manager_info'] = get_manager_info(handle, timeout)
 
     LOGGER.info("Collecting Ceph cluster : OSD information")
     result_dict['osd_info'] = get_osd_info(handle, timeout)
@@ -333,3 +375,4 @@ if __name__ == '__main__':
                             args.ceph_config_file,
                             args.results_dir,
                             args.timeout)
+

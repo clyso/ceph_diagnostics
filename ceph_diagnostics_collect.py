@@ -9,15 +9,7 @@ Script assumes the ceph.conf file is present in
 /etc/ceph/ceph.conf, if not then its path  should be
 provided in arguments to the script.
 
-Script would collect the following diagnostic information
-system - uname, lsb_release
-ceph cluster info : status, version, fsid, ceph conf
-cluster health : health, health detail, df
-monitor : stat, dump, getmap and metadata
-osd : df, tree, dump, stat, getmap, getcrushmap, perf, metadata
-pg : stat, dump, dump_stuck
-mds: dump, stat, getmap
-
+Script would collect system and ceph cluster diagnostic information.
 """
 
 __author__ = ""
@@ -32,6 +24,7 @@ __status__ = "Development"
 
 import argparse
 import datetime
+import re
 import sys
 import shutil
 import logging
@@ -46,7 +39,7 @@ CEPH_TIMEOUT = 10
 # Set up logging for the script
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 LOGGER = logging.getLogger()
-LOGGER.setLevel(logging.INFO) #parameterize
+LOGGER.setLevel(logging.INFO)
 
 
 def connect(ceph_config_file, timeout = CEPH_TIMEOUT):
@@ -74,12 +67,24 @@ def shell_command(command, shell=True):
     :param command: command to execute
     :return: result of the command
     """
+    LOGGER.debug("SHELL COMMAND: %s", command)
     p = subprocess.Popen(command, stdout=subprocess.PIPE, shell=shell)
     result = p.communicate()[0]
-    if result == "command not known":
-        LOGGER.info("command not known " + err)
+    if not result:
+        LOGGER.info("command failed: %s", command)
 
     return result.strip()
+
+def ceph_shell_command(command, timeout):
+    """
+    execute Ceph shell command via shell
+    :param command: command to execute
+    :param timeout: ceph connect timeout
+    :return: result of the command
+    """
+    LOGGER.debug("CEPH COMMAND: %s", command)
+
+    return shell_command('ceph --connect-timeout=%d %s' % (timeout, command)) + b'\n'
 
 
 def ceph_mon_command(handle, command, timeout):
@@ -90,10 +95,11 @@ def ceph_mon_command(handle, command, timeout):
     :param timeout: timeout for the command execution
     :return: command result
     """
+    LOGGER.debug("MON COMMAND: %s", command)
     cmd = {'prefix': command}
     ret, buf, err = handle.mon_command(json.dumps(cmd), b'', timeout=timeout)
     if err == "command not known":
-        LOGGER.info("command not known " + err)
+        LOGGER.info("command not known: %s", command)
 
     return buf
 
@@ -137,7 +143,7 @@ def get_ceph_info(handle, ceph_config, timeout):
     version = str(version.decode('utf-8')).split(' ')[2].split(".")[0]
 
     if int(version) >= 13:
-        cluster['versions'] = shell_command('ceph versions') + b'\n'
+        cluster['versions'] = ceph_shell_command('versions', timeout)
 
 
     fsid = handle.get_fsid() + '\n'
@@ -148,6 +154,17 @@ def get_ceph_info(handle, ceph_config, timeout):
 
     cephconf = str(ceph_conf)
     cluster['ceph_conf'] = str.encode(cephconf)
+
+    if int(version) >= 13:
+        config_dump = ceph_shell_command('config dump', timeout).decode("utf-8")
+        cluster['config_dump'] = re.sub(r'(ACCESS_KEY|SECRET_KEY|PASSWORD).*',
+                                        r'\1 <CENSORED>',
+                                        config_dump,
+                                        flags=re.IGNORECASE).encode("utf-8")
+
+    auth_list = ceph_shell_command('auth list', timeout).decode("utf-8")
+    cluster['auth_list'] = re.sub(r'(key:) .*', r'\1 <CENSORED>',
+                                  auth_list).encode("utf-8")
 
     return cluster
 
@@ -164,9 +181,15 @@ def get_health_info(handle, timeout):
     health['stat']   = ceph_mon_command(handle, 'health'       , timeout)
     # TODO command not known with ceph_mon_command
     #health['detail'] = ceph_mon_command(handle, 'health detail', timeout)
-    health['detail'] = shell_command('ceph health detail') + b'\n'
+    health['detail'] = ceph_shell_command('health detail', timeout)
     health['df']     = ceph_mon_command(handle, 'df'           , timeout)
+    health['df-detail'] = ceph_shell_command('df detail', timeout)
     health['report'] = ceph_mon_command(handle, 'report'       , timeout)
+
+    health['crash_ls'] = ceph_shell_command('crash ls', timeout)
+    for id in filter(lambda id: id and id != 'ID',
+                     [(l + ' ID').split()[0] for l in health['crash_ls'].decode("utf-8").split("\n")]):
+        health['crash_info_' + id] = ceph_shell_command('crash info ' + id, timeout)
 
     return health
 
@@ -211,7 +234,7 @@ def get_manager_info(handle, timeout):
     mgr_info['dump']       = ceph_mon_command(handle, 'mgr dump'     , timeout)
     mgr_info['metadata']   = ceph_mon_command(handle, 'mgr metadata' , timeout)
     return mgr_info
-    
+
 
 def get_osd_info(handle, timeout):
     """
@@ -223,6 +246,7 @@ def get_osd_info(handle, timeout):
     osd_info = dict()
     osd_info['tree']     = ceph_mon_command(handle, 'osd tree'       , timeout)
     osd_info['df']       = ceph_mon_command(handle, 'osd df'         , timeout)
+    osd_info['df-tree']  = ceph_shell_command('osd df tree'          , timeout)
     osd_info['dump']     = ceph_mon_command(handle, 'osd dump'       , timeout)
     osd_info['stat']     = ceph_mon_command(handle, 'osd stat'       , timeout)
     osd_info['crushmap'] = ceph_mon_command(handle, 'osd getcrushmap', timeout)
@@ -232,17 +256,28 @@ def get_osd_info(handle, timeout):
     return osd_info
 
 
-def get_pg_info(handle, timeout):
+def get_pg_info(handle, timeout, query_inactive_pg):
     """
     Gathers pg information
     :param handle: cluster handle
     :param timeout: timeout for the command execution
+    :param query_inactive_pg: if need to query inactive pg
     :return:
     """
     pg_info = dict()
     pg_info['stat']       = ceph_mon_command(handle, 'pg stat'      , timeout)
     pg_info['dump']       = ceph_mon_command(handle, 'pg dump'      , timeout)
     pg_info['dump_stuck'] = ceph_mon_command(handle, 'pg dump_stuck', timeout)
+    pg_info['dump_json']  = ceph_shell_command('pg dump --format json', timeout)
+
+    if query_inactive_pg:
+        dump_inactive = ceph_shell_command('pg dump_stuck inactive',
+                                           timeout).decode("utf-8").split("\n")
+        for pg in filter(lambda pg: pg and pg[0].isdigit(),
+                         [(l + 'X').split()[0] for l in dump_inactive]):
+            pg_info['query-' + pg] = ceph_shell_command('pg ' + pg + ' query',
+                                                        timeout)
+
     return pg_info
 
 
@@ -258,6 +293,44 @@ def get_mds_info(handle, timeout):
     mds_info['stat'] = ceph_mon_command(handle, 'mds stat'  , timeout)
     mds_info['map']  = ceph_mon_command(handle, 'mds getmap', timeout)
     return mds_info
+
+
+def get_fs_info(handle, timeout):
+    """
+    gathers fs information
+    :param handle: cluster handle
+    :param timeout: timeout for the command execution
+    :return:
+    """
+    fs_info = dict()
+    fs_info['dump'] = ceph_shell_command('fs dump', timeout)
+    return fs_info
+
+
+def get_radosgw_admin_info(handle, timeout):
+    """
+    gathers radosgw-admin information
+    :param handle: cluster handle
+    :param timeout: timeout for the command execution
+    :return:
+    """
+    radosgw_admin_info = dict()
+    radosgw_admin_info['bucket_stats'] = shell_command('radosgw-admin bucket stats') + b'\n'
+    radosgw_admin_info['bucket_limit_check'] = shell_command('radosgw-admin bucket limit check') + b'\n'
+    radosgw_admin_info['metadata_list_bucket.instance'] = shell_command('radosgw-admin metadata list bucket.instance') + b'\n'
+    return radosgw_admin_info
+
+
+def get_orch_info(handle, timeout):
+    """
+    gathers orchestrator information
+    :param handle: cluster handle
+    :param timeout: timeout for the command execution
+    :return:
+    """
+    orch_info = dict()
+    orch_info['status'] = ceph_shell_command('orch status', timeout)
+    return orch_info
 
 
 def dict_to_files(result_dict, dest_dir):
@@ -282,7 +355,6 @@ def dict_to_files(result_dict, dest_dir):
                                            "-" + contentname)
 
                 LOGGER.debug('Writing file %s', tmpfile)
-                print('Writing file %s', tmpfile)
                 with open(tmpfile, 'wb') as f:
                     f.write(contentdata)
                 f.close()
@@ -301,12 +373,14 @@ def dict_to_files(result_dict, dest_dir):
 def diagnostic_data_collect(handle,
                             ceph_config,
                             result_dir,
-                            timeout):
+                            timeout,
+                            query_inactive_pg):
     """
     collect the daignostics
     :param ceph_config: config file location
     :param result_dir: directory to store the data in
     :param timeout: timeout for command execution
+    :param query_inactive_pg: if need to query inactive pg
     :return: -
     """
     result_dict = dict()
@@ -333,10 +407,19 @@ def diagnostic_data_collect(handle,
     result_dict['osd_info'] = get_osd_info(handle, timeout)
 
     LOGGER.info("Collecting Ceph cluster : PG information")
-    result_dict['pg_info'] = get_pg_info(handle, timeout)
+    result_dict['pg_info'] = get_pg_info(handle, timeout, query_inactive_pg)
 
     LOGGER.info("Collecting Ceph cluster : MDS information")
     result_dict['mds_info'] = get_mds_info(handle, timeout)
+
+    LOGGER.info("Collecting Ceph cluster : FS information")
+    result_dict['fs_info'] = get_fs_info(handle, timeout)
+
+    LOGGER.info("Collecting Ceph cluster : radosgw-admin information")
+    result_dict['radosgw_admin_info'] = get_radosgw_admin_info(handle, timeout)
+
+    LOGGER.info("Collecting Ceph cluster : orchestrator information")
+    result_dict['orch_info'] = get_orch_info(handle, timeout)
 
     dict_to_files(result_dict, result_dir)
 
@@ -363,16 +446,31 @@ if __name__ == '__main__':
                         dest='timeout',
                         default=CEPH_TIMEOUT,
                         help='Timeout for Ceph operations')
+    parser.add_argument('--query-inactive-pg',
+                        action='store_true',
+                        dest='query_inactive_pg',
+                        default=False,
+                        help='Query inactive pg')
+    parser.add_argument('--verbose',
+                        action='store_true',
+                        dest='verbose',
+                        default=False,
+                        help='Be verbose')
+
 
     args = parser.parse_args()
 
     if not args.ceph_config_file or not args.results_dir or not args.timeout:
         parser.print_usage()
 
+    if args.verbose:
+        LOGGER.setLevel(logging.DEBUG)
+
     handle = connect(args.ceph_config_file)
 
     diagnostic_data_collect(handle,
                             args.ceph_config_file,
                             args.results_dir,
-                            args.timeout)
+                            args.timeout,
+                            args.query_inactive_pg)
 

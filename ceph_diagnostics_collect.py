@@ -124,12 +124,13 @@ def get_system_info():
     return system
 
 
-def get_ceph_info(handle, ceph_config, timeout):
+def get_ceph_info(handle, ceph_config, uncensored, timeout):
     """
     Gather overall cluster information
     :param handle: cluster handle
-    :param command: command to be executed
-    :param timeout: timeout for the command execution
+    :param ceph_config: path to ceph config
+    :param uncensored: don't hide sensitive data
+    :param timeout: ceph commands execution timeout
     :return:
     """
     cluster = dict()
@@ -156,15 +157,21 @@ def get_ceph_info(handle, ceph_config, timeout):
     cluster['ceph_conf'] = str.encode(cephconf)
 
     if int(version) >= 13:
-        config_dump = ceph_shell_command('config dump', timeout).decode("utf-8")
-        cluster['config_dump'] = re.sub(r'(ACCESS_KEY|SECRET_KEY|PASSWORD).*',
-                                        r'\1 <CENSORED>',
-                                        config_dump,
-                                        flags=re.IGNORECASE).encode("utf-8")
+        config_dump = ceph_shell_command('config dump', timeout)
+        if uncensored:
+            cluster['config_dump'] = config_dump
+        else:
+            cluster['config_dump'] = re.sub(r'(ACCESS_KEY|SECRET_KEY|PASSWORD).*',
+                                            r'\1 <CENSORED>',
+                                            config_dump.decode("utf-8"),
+                                            flags=re.IGNORECASE).encode("utf-8")
 
-    auth_list = ceph_shell_command('auth list', timeout).decode("utf-8")
-    cluster['auth_list'] = re.sub(r'(key:) .*', r'\1 <CENSORED>',
-                                  auth_list).encode("utf-8")
+    auth_list = ceph_shell_command('auth list', timeout)
+    if uncensored:
+        cluster['auth_list'] = auth_list
+    else:
+        cluster['auth_list'] = re.sub(r'(key:) .*', r'\1 <CENSORED>',
+                                      auth_list.decode("utf-8")).encode("utf-8")
 
     return cluster
 
@@ -370,17 +377,11 @@ def dict_to_files(result_dict, dest_dir):
     shutil.rmtree(tempdir)
 
 
-def diagnostic_data_collect(handle,
-                            ceph_config,
-                            result_dir,
-                            timeout,
-                            query_inactive_pg):
+def diagnostic_data_collect(handle, args):
     """
     collect the daignostics
     :param ceph_config: config file location
-    :param result_dir: directory to store the data in
-    :param timeout: timeout for command execution
-    :param query_inactive_pg: if need to query inactive pg
+    :param args: command line arguments
     :return: -
     """
     result_dict = dict()
@@ -389,39 +390,44 @@ def diagnostic_data_collect(handle,
     result_dict['system_info'] = get_system_info()
 
     LOGGER.info("Collecting Ceph cluster information")
-    result_dict['ceph_cluster_info'] = get_ceph_info(handle, ceph_config, timeout)
+    result_dict['ceph_cluster_info'] = get_ceph_info(handle,
+                                                     args.ceph_config_file,
+                                                     args.uncensored,
+                                                     args.timeout)
 
     LOGGER.info("Collecting Ceph cluster : health information")
-    result_dict['cluster_health'] = get_health_info(handle, timeout)
+    result_dict['cluster_health'] = get_health_info(handle, args.timeout)
 
     LOGGER.info("Collecting Ceph cluster : monitor information")
-    result_dict['monitor_info'] = get_monitor_info(handle, timeout)
+    result_dict['monitor_info'] = get_monitor_info(handle, args.timeout)
 
     LOGGER.info("Collecting Ceph cluster : device information")
-    result_dict['device_info'] = get_device_info(handle, timeout)
+    result_dict['device_info'] = get_device_info(handle, args.timeout)
 
     LOGGER.info("Collecting Ceph cluster : manager information")
-    result_dict['manager_info'] = get_manager_info(handle, timeout)
+    result_dict['manager_info'] = get_manager_info(handle, args.timeout)
 
     LOGGER.info("Collecting Ceph cluster : OSD information")
-    result_dict['osd_info'] = get_osd_info(handle, timeout)
+    result_dict['osd_info'] = get_osd_info(handle, args.timeout)
 
     LOGGER.info("Collecting Ceph cluster : PG information")
-    result_dict['pg_info'] = get_pg_info(handle, timeout, query_inactive_pg)
+    result_dict['pg_info'] = get_pg_info(handle, args.timeout,
+                                         args.query_inactive_pg)
 
     LOGGER.info("Collecting Ceph cluster : MDS information")
-    result_dict['mds_info'] = get_mds_info(handle, timeout)
+    result_dict['mds_info'] = get_mds_info(handle, args.timeout)
 
     LOGGER.info("Collecting Ceph cluster : FS information")
-    result_dict['fs_info'] = get_fs_info(handle, timeout)
+    result_dict['fs_info'] = get_fs_info(handle, args.timeout)
 
     LOGGER.info("Collecting Ceph cluster : radosgw-admin information")
-    result_dict['radosgw_admin_info'] = get_radosgw_admin_info(handle, timeout)
+    result_dict['radosgw_admin_info'] = get_radosgw_admin_info(handle,
+                                                               args.timeout)
 
     LOGGER.info("Collecting Ceph cluster : orchestrator information")
-    result_dict['orch_info'] = get_orch_info(handle, timeout)
+    result_dict['orch_info'] = get_orch_info(handle, args.timeout)
 
-    dict_to_files(result_dict, result_dir)
+    dict_to_files(result_dict, args.results_dir)
 
 
 if __name__ == '__main__':
@@ -451,6 +457,11 @@ if __name__ == '__main__':
                         dest='query_inactive_pg',
                         default=False,
                         help='Query inactive pg')
+    parser.add_argument('--uncensored',
+                        action='store_true',
+                        dest='uncensored',
+                        default=False,
+                        help="Don't hide sensitive data")
     parser.add_argument('--verbose',
                         action='store_true',
                         dest='verbose',
@@ -468,9 +479,5 @@ if __name__ == '__main__':
 
     handle = connect(args.ceph_config_file)
 
-    diagnostic_data_collect(handle,
-                            args.ceph_config_file,
-                            args.results_dir,
-                            args.timeout,
-                            args.query_inactive_pg)
+    diagnostic_data_collect(handle, args)
 

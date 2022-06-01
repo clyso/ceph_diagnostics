@@ -14,7 +14,7 @@ Script makes use of librados python library to execute monitor commands.
 
 `python ceph_diagnostics_collect.py [--ceph-config-file] [--results-dir] [--timeout] [--query-inactive-pg] [--verbose]`
 - defaults :
-    - ceph-config-file = /etc/ceph/ceph.config
+    - ceph-config-file = /etc/ceph/ceph.conf
     - results-dir = /tmp
     - timeout = 10 seconds
      

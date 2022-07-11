@@ -322,9 +322,17 @@ def get_radosgw_admin_info(handle, timeout):
     :return:
     """
     radosgw_admin_info = dict()
+
+    osd_dump = ceph_shell_command("osd dump", timeout)
+    if not re.search('^pool .* application rgw', osd_dump.decode('utf-8'),
+                     re.MULTILINE):
+        LOGGER.debug('skipping radosgw_admin_info: no rgw pools found')
+        return radosgw_admin_info
+
     radosgw_admin_info['bucket_stats'] = shell_command('radosgw-admin bucket stats') + b'\n'
     radosgw_admin_info['bucket_limit_check'] = shell_command('radosgw-admin bucket limit check') + b'\n'
     radosgw_admin_info['metadata_list_bucket.instance'] = shell_command('radosgw-admin metadata list bucket.instance') + b'\n'
+
     return radosgw_admin_info
 
 

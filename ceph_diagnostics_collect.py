@@ -310,7 +310,28 @@ def get_fs_info(handle, timeout):
     :return:
     """
     fs_info = dict()
+    fs_info['ls'] = ceph_shell_command('fs ls', timeout)
+    fs_info['status'] = ceph_shell_command('fs status', timeout)
     fs_info['dump'] = ceph_shell_command('fs dump', timeout)
+
+    try:
+        status = json.loads(
+            ceph_shell_command('fs status --format json', timeout).decode('utf-8'))
+    except Error as e:
+        LOGGER.debug('failed to decode `fs status`: %s', e)
+        status = dict()
+
+    mdsmap = status.get('mdsmap', [])
+    daemons = [d['name'] for d in mdsmap if d.get('state') in ('active')]
+    for name in daemons:
+        LOGGER.debug('collecting daemon %s info', name)
+        mds = 'mds.%s' % name
+        for cmd in ('status', 'dump_historic_ops', 'dump_ops_in_flight',
+                    'cache status', 'perf dump', 'scrub status',
+                    'dump loads', 'session ls', 'dump_mempools'):
+            fs_info['%s_%s' % (mds, cmd.replace(' ', '_'))] = \
+                ceph_shell_command('tell %s %s' % (mds, cmd), timeout)
+
     return fs_info
 
 

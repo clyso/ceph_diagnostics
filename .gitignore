@@ -1,2 +1,3 @@
 .idea/
 venv/
+ceph_diagnostics_show/lib/__pycache__

@@ -1,0 +1,71 @@
+#!/bin/sh
+
+description() {
+    echo "process pg dump"
+}
+
+help() {
+    description
+    echo
+    echo "Commands: "
+    echo "  ls-by-osd <id|osd.id>      - list pg on osd [osd]"
+    echo "  ls-by-primary <id|osd.id>  - list pg with primary = [osd]"
+}
+
+get_osd_id() {
+    id=$(echo $1 | sed -s 's/osd\.//')
+    case "${id}" in
+        [0-9]*)
+            echo ${id}
+            ;;
+        *)
+            echo "invalid osd id: '$id'" >&2
+            exit 1
+            ;;
+    esac
+}
+
+ls_by_osd() {
+    local id
+    local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
+
+    id=$(get_osd_id $1) || exit 1
+
+    awk '
+      $1 == "PG_STAT" || $1 ~ /^[0-9]+\./ && ($16 ~ /[,\[]'${id}'[,\]]/ || $18 ~ /[,\[]'${id}'[,\]]/)
+    ' "${pgdump}"
+}
+
+ls_by_primary() {
+    local id
+    local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
+
+    id=$(get_osd_id $1) || exit 1
+
+    awk '
+      $1 == "PG_STAT" || $1 ~ /^[0-9]+\./ && ($17 == '${id}' || $19 == '${id}')
+    ' "${pgdump}"
+}
+
+case "$1" in
+    description)
+        description
+        exit 0
+        ;;
+    help)
+        help
+        exit 0
+        ;;
+    ls-by-osd|ls-by-primary)
+        cmd="$(echo $1 | sed -e 's/-/_/g')"
+        shift
+        ${cmd} "$@"
+        exit $?
+        ;;
+    *)
+	echo "invalid command: '$1'" >&2
+	echo "" >&2
+        help >&2
+        exit 1
+        ;;
+esac

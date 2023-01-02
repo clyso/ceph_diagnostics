@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import sys
+
+sys.path.append(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from common import get_report
+
+#
+# Global
+#
+
+cmd_description='show ceph osd info'
+
+parser = argparse.ArgumentParser(prog='cds osd', description=cmd_description)
+parser.add_argument(
+    'command',
+    metavar='sum|metadata|find',
+    help='command',
+    nargs=1,
+    default=None,
+)
+parser.add_argument(
+    'id',
+    metavar='id',
+    help='osd id',
+    nargs='*',
+    type=int,
+    default=None,
+)
+parser.add_argument(
+    '-t', '--type',
+    metavar='hdd|hybrid|ssd',
+    help='show summary only for this osd device type',
+    default=None,
+)
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def get_osd_metadata(ids):
+    report = get_report()
+    if report is None:
+        return None
+    m = report['osd_metadata']
+    if ids:
+        m = list(filter(lambda osd: osd['id'] in ids, m))
+    return m
+
+def osd_sum(ids, filter_dev_type):
+    m = get_osd_metadata(ids)
+    hosts = {}
+    dev_types = {"hdd": 0, "hybrid": 0, "ssd": 0}
+    for osd in m:
+        if not int(osd["rotational"]):
+            dev_type = "ssd"
+        elif osd.get("bluefs_db_rotational") is None or \
+             int(osd["bluefs_db_rotational"]):
+            dev_type = "hdd"
+        else:
+            dev_type = "hybrid"
+        if filter_dev_type and filter_dev_type != dev_type:
+            continue
+        dev_types[dev_type] += 1
+
+        hostname = osd["hostname"]
+        if hostname not in hosts:
+            hosts[hostname] = []
+        hosts[hostname].append(osd["id"])
+
+    print("OSD DEV TYPES: {}".format(dev_types))
+    print("OSD HOSTS:")
+    for hostname in sorted(hosts):
+        print(" {} ({}): {}".format(hostname, len(hosts[hostname]), sorted(hosts[hostname])))
+
+def osd_metadata(ids):
+    m = get_osd_metadata(ids)
+    print(json.dumps(m, indent=2))
+
+def osd_find(ids):
+    m = get_osd_metadata(ids)
+
+    print("{}\t{}\t{}\t\t{}\t\t{}".format(
+        "OSD", "HOSTNAME", "DEV/DB", "FRONT_ADDR", "BACK_ADDR"))
+    for osd in m:
+        print("osd.{}\t{}\t{:>4}/{:<4}\t{}\t{}".format(
+            osd["id"],
+            osd["hostname"],
+            osd.get("bluestore_bdev_dev_node", "--"),
+            osd.get("bluefs_db_dev_node", "--"),
+            osd["front_addr"].split("/")[0],
+            osd["back_addr"].split("/")[0]))
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+
+    if 'sum' in args.command:
+        osd_sum(args.id, args.type)
+    if 'metadata' in args.command:
+        osd_metadata(args.id)
+    elif 'find' in args.command:
+        osd_find(args.id)
+
+#
+# main
+#
+
+main()

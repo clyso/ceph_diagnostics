@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import sys
+import re
+
+sys.path.append(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from common import get_report
+
+#
+# Global
+#
+
+cmd_description='find daemon by <ip:port> address'
+
+parser = argparse.ArgumentParser(prog='cds find-by-addr', description=cmd_description)
+parser.add_argument(
+    'address',
+    metavar='ip:port',
+    help='address',
+    nargs=1,
+    default=None,
+)
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def find_by_addr(addresses):
+    report = get_report()
+    if report is None:
+        return None
+
+    for addr in addresses:
+        pattern = r'\b{}\b'.format(addr)
+
+        for mon in report['monmap']['mons']:
+            for k in 'public_addr', 'addr':
+                if re.search(pattern, mon.get(k, '')):
+                    print('mon.{}'.format(mon['name']))
+                    return
+
+        for osd in report['osdmap']['osds']:
+            for k in 'public_addr', 'cluster_addr', 'heartbeat_back_addr', \
+                'heartbeat_front_addr':
+                if re.search(pattern, osd.get(k, '')):
+                    print('osd.{}'.format(osd['osd']))
+                    return
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+
+    find_by_addr(args.address)
+
+
+#
+# main
+#
+
+main()

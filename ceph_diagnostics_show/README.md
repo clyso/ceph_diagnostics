@@ -21,6 +21,12 @@ usage: cds <command> [options] [args]
 Commands:
 
   ceph        print ceph command output
+  crush          show ceph crush info
+  find-by-addr   find daemon by <ip:port> address
+  historic_ops   print ceph daemon historic ops
+  osd            show ceph osd info
+  pg             process pg dump
+  pool           show pool info
 
 $ cds ceph help
 print ceph command output

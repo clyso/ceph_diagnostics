@@ -18,4 +18,7 @@ Script makes use of librados python library to execute monitor commands.
     - results-dir = /tmp
     - timeout = 10 seconds
      
+## How to analyse ?
 
+There is ceph_diagnostics_show tool that may be useful for analyzing
+collected data. See ceph_diagnostics_show/README.md for details.

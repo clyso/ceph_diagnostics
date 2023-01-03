@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import re
+import sys
+
+#
+# Global
+#
+
+CEPH_DIAGNOSTICS_COLLECT_DIR = os.environ.get('CEPH_DIAGNOSTICS_COLLECT_DIR')
+
+cmd_description='print ceph daemon historic ops'
+
+parser = argparse.ArgumentParser(prog='cds historic_ops', description=cmd_description)
+parser.add_argument(
+    'daemon',
+    metavar='mds.x|mon.x|osd.x',
+    help='print ops for this daemon',
+    nargs='?',
+    default=None,
+)
+parser.add_argument(
+    '-d', '--sort-by-daemon',
+    action='store_true',
+    help='sort by daemon',
+    default=False,
+)
+parser.add_argument(
+    '-t', '--sort-by-duration',
+    action='store_true',
+    help='sort by duration',
+    default=False,
+)
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+
+    ops = []
+    for fname in os.listdir(CEPH_DIAGNOSTICS_COLLECT_DIR):
+        m = re.match(r'^.*-(mds|mon|osd)\.(.+)_dump_historic_ops', fname)
+        if not m:
+            continue
+        daemon_type = m.group(1)
+        daemon = f'{m.group(1)}.{m.group(2)}'
+        if args.daemon and \
+           args.daemon not in (daemon_type, f'{daemon_type}.*', daemon):
+            continue
+        try:
+            with open(CEPH_DIAGNOSTICS_COLLECT_DIR + '/' + fname, 'r') as f:
+                historic_ops = json.load(f)
+        except:
+            continue
+        ops.extend([dict({'daemon' : daemon}, **x) for x in historic_ops['ops']])
+
+    if args.sort_by_duration:
+        ops.sort(key=lambda op: op['duration'], reverse=True)
+
+    if args.sort_by_daemon:
+        ops.sort(key=lambda op: op['daemon'])
+
+    try:
+        for op in ops:
+            print('%-8s %1.3f %s %s' % (op['daemon'], op['duration'],
+                                        op['initiated_at'], op['description']))
+            sys.stdout.flush()
+    except IOError as e:
+        pass
+
+#
+# main
+#
+
+main()

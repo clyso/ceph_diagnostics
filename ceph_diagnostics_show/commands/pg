@@ -10,6 +10,8 @@ help() {
     echo "Commands: "
     echo "  ls-by-osd <id|osd.id>      - list pg on osd [osd]"
     echo "  ls-by-primary <id|osd.id>  - list pg with primary = [osd]"
+    echo "  info <pgid>                - show pg info"
+    echo "  stats <pgid>               - show pg stats in json format"
 }
 
 get_osd_id() {
@@ -47,6 +49,32 @@ ls_by_primary() {
     ' "${pgdump}"
 }
 
+info() {
+    local pgid=$1
+
+    stats ${pgid} | jq -r '. |
+      ["pgid:      ", .pgid],
+      ["state:     ", .state],
+      ["up:        ", .up[]],
+      ["acting:    ", .acting[]],
+      ["objects:   ", .stat_sum.num_objects],
+      ["bytes:     ", .stat_sum.num_bytes],
+      ["omap_keys: ", .stat_sum.num_omap_keys],
+      ["omap_bytes:", .stat_sum.num_omap_bytes],
+      ["unfound:   ", .stat_sum.num_objects_unfound],
+      ["snaptrimq: ", .snaptrimq_len],
+      ["scrub:     ", .last_scrub_stamp],
+      ["deep-scrub:", (.last_deep_scrub_stamp, "(" + (.last_scrub_duration | tostring) + " sec)")]
+        | @tsv'
+}
+
+stats() {
+    local pgid=$1
+    local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json"
+
+    jq ".pg_map.pg_stats[] | select(.pgid==\"${pgid}\")" < "${pgdump}"
+}
+
 case "$1" in
     description)
         description
@@ -56,7 +84,7 @@ case "$1" in
         help
         exit 0
         ;;
-    ls-by-osd|ls-by-primary)
+    ls-by-osd|ls-by-primary|info|stats)
         cmd="$(echo $1 | sed -e 's/-/_/g')"
         shift
         ${cmd} "$@"

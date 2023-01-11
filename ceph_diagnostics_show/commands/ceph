@@ -11,6 +11,7 @@ help() {
     echo ""
     echo "  auth list"
     echo "  config dump"
+    echo "  config log"
     echo "  crash ls"
     echo "  device ls"
     echo "  df detail"
@@ -63,6 +64,9 @@ case "$cmd" in
         ;;
     "config dump")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-config_dump"
+        ;;
+    "config log")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-config_log"
         ;;
     "fsid")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-fsid"

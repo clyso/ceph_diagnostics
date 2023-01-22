@@ -1,0 +1,89 @@
+#!/bin/sh
+
+CDNS_DIR=$(dirname $(readlink -f $0))
+CDNS_COMMANDS_DIR=${CDNS_DIR}/commands
+
+export CEPH_DIAGNOSTICS_NODE_COLLECT_DIR
+
+help() {
+    local cmd
+
+    if [ -n "$1" ]; then
+        cmd="$1"
+        run_cmd "$cmd" help
+        return $?
+    fi
+
+    echo "Ceph Diagnostics Node Show"
+    echo ""
+    echo "usage: $(basename $0) <command> [options] [args]"
+    echo ""
+    echo "Commands:"
+    echo ""
+
+    local max_len=10
+    for cmd in $(ls ${CDNS_COMMANDS_DIR}); do
+        local len=$(echo $cmd | wc -c)
+        if [ $len -gt $max_len ]; then
+            max_len=$len
+        fi
+    done
+    for cmd in $(ls ${CDNS_COMMANDS_DIR}); do
+        local description="$(${CDNS_COMMANDS_DIR}/${cmd} description)"
+        printf "  %-${max_len}s  %s\n" "${cmd}" "${description}"
+    done
+}
+
+set_ceph_diagnostics_node_collect_dir() {
+    test -n "${CEPH_DIAGNOSTICS_NODE_COLLECT_DIR}" && return
+
+    local dir=$(pwd)
+
+    while [ "${dir}" != / ]; do
+        if [ -e "${dir}/cephadm-status" ]; then
+            break
+        fi
+        dir=$(dirname "${dir}")
+    done
+    if [ -e "${dir}/cephadm-status" ]; then
+        CEPH_DIAGNOSTICS_NODE_COLLECT_DIR="${dir}"
+    else
+        echo "$(basename $0) should be run inside ceph-node-collect directory" >&2
+        exit 1
+    fi
+}
+
+run_cmd() {
+    local orig_cmd=$1 cmd=$1
+    shift
+
+    while ! test -x ${CDNS_COMMANDS_DIR}/${cmd}; do
+        test -z "$@" && break
+        cmd=${cmd}-$1
+        shift
+    done
+
+    if ! test -x ${CDNS_COMMANDS_DIR}/${cmd}; then
+        echo "unknown command: ${orig_cmd}" >&2
+        exit 1
+    fi
+
+    if [ "$1" != help ]; then
+	set_ceph_diagnostics_node_collect_dir
+    fi
+
+    ${CDNS_COMMANDS_DIR}/${cmd} $@
+}
+
+#
+# Main
+#
+
+if [ -z "$1" ]; then
+    help $@
+elif [ "$1" = help ]; then
+    shift
+    help $@
+else
+    run_cmd $@
+fi

@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import re
+import sys
+
+sys.path.append(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from common import load_json
+
+#
+# Global
+#
+
+CEPH_DIAGNOSTICS_NODE_COLLECT_DIR = os.environ.get('CEPH_DIAGNOSTICS_NODE_COLLECT_DIR')
+
+cmd_description='print ceph daemon perf'
+
+parser = argparse.ArgumentParser(prog='sesa perf', description=cmd_description)
+parser.add_argument(
+    '-d', '--daemon',
+    metavar='mds.x|mon.x|osd.x',
+    help='print ops for this daemon',
+    default=None,
+)
+parser.add_argument(
+    '-n', '--no-keys',
+    action='store_true',
+    help='print only values',
+    default=False,
+)
+parser.add_argument(
+    '-l', '--no-vals',
+    action='store_true',
+    help='print only keys',
+    default=False,
+)
+parser.add_argument(
+    'cmd',
+    nargs='?',
+    help='command to run',
+    choices=['daemons', 'dump', 'grep'],
+    default='daemons',
+)
+parser.add_argument(
+    'key',
+    nargs='?',
+    help='perf key (if not specified, list all keys)',
+    default=None,
+)
+parser.add_argument(
+    'subkey',
+    help='perf sub-key',
+    nargs='?',
+    default=None,
+)
+parser.add_argument(
+    'subsubkey',
+    help='perf sub-sub-key',
+    nargs='?',
+    default=None,
+)
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def grep(perf, pattern, prefix):
+    for k in sorted(perf.keys()):
+        if re.search(pattern, k):
+            print('%s %s %s' % (prefix, k, perf[k]))
+            sys.stdout.flush()
+        if isinstance(perf[k], dict):
+            grep(perf[k], pattern, '%s %s' % (prefix, k))
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+
+    perf = {}
+    for d in os.listdir(CEPH_DIAGNOSTICS_NODE_COLLECT_DIR + '/daemons'):
+        if args.daemon:
+            if d != args.daemon:
+                continue
+        elif not re.match(r'(mds|mgr|mon|osd)\.', d):
+            continue
+        perf[d] = load_json(CEPH_DIAGNOSTICS_NODE_COLLECT_DIR + '/daemons/' +
+                             d + '/ceph-daemon-perf')
+
+    if args.cmd == 'daemons':
+        for d in sorted(perf.keys()):
+            print(d)
+            sys.stdout.flush()
+        exit(0)
+
+    if not args.key:
+        try:
+            for d in sorted(perf.keys()):
+                for key in sorted(perf[d].keys()):
+                    if args.cmd == 'grep':
+                        key = key + ' ' + str(perf[d][key])
+                    print('%-8s %s' % (d, key))
+                    sys.stdout.flush()
+        except IOError as e:
+            pass
+        exit(0)
+
+    if args.cmd == 'grep':
+        try:
+            for d in sorted(perf.keys()):
+                grep(perf[d], args.key, '%-8s' % d)
+        except IOError as e:
+            pass
+        exit(0)
+
+    try:
+        for d in sorted(perf.keys()):
+            key = args.key
+            if args.key not in perf[d]:
+                continue
+            val = perf[d][args.key]
+            if args.subkey:
+                key = key + ' ' + args.subkey
+                if args.subkey not in val:
+                    continue
+                val = val[args.subkey]
+            if args.subsubkey:
+                key = key + ' ' + args.subsubkey
+                if args.subsubkey not in val:
+                    continue
+                val = val[args.subsubkey]
+            if args.no_vals:
+                val = list(val)
+            if args.no_keys:
+                print('%-8s %s' % (d, val))
+            else:
+                print('%-8s %s %s' % (d, key, val))
+            sys.stdout.flush()
+    except IOError as e:
+        pass
+
+#
+# main
+#
+
+main()

@@ -1,0 +1,80 @@
+#!/bin/sh
+
+description() {
+    echo "print daemon admin socket command output"
+}
+
+help() {
+    echo "usage: cdns daemon <daemon> <command>"
+    echo
+    description
+    echo
+}
+
+is_collected_daemon() {
+    local daemon=$1
+
+    test -d "${CEPH_DIAGNOSTICS_NODE_COLLECT_DIR}/daemons/${daemon}" 2>/dev/null
+}
+
+list_collected_daemons() {
+    find "${CEPH_DIAGNOSTICS_NODE_COLLECT_DIR}/daemons" \
+	 -mindepth 1 -maxdepth 1 -type d -printf "%f\n"
+}
+
+print_daemon_commands() {
+    local daemon=$1
+
+    find "${CEPH_DIAGNOSTICS_NODE_COLLECT_DIR}/daemons/${daemon}" \
+	 -mindepth 1 -maxdepth 1 -type f -printf "  %f\n" |
+	sed -e 's/ceph-daemon-//; s/-/ /g'
+}
+
+asock_cmd() {
+    local daemon="$1"
+    shift
+
+    local file="${CEPH_DIAGNOSTICS_NODE_COLLECT_DIR}/daemons/${daemon}/ceph-daemon-$(echo $@ | sed -e 's/ /-/g')"
+
+    if ! [ -f "${file}" ]; then
+	echo "invalid command: $@" >&2
+	return 1
+    fi
+
+    cat "${file}"
+}
+
+case $1 in
+    description)
+        description
+        exit 0
+        ;;
+    help)
+        help
+        exit 0
+        ;;
+esac
+
+if [ -z "$1" ]; then
+    list_collected_daemons
+    exit 0
+fi
+
+daemon="$1"
+shift 2>/dev/null
+
+if ! is_collected_daemon "${daemon}"; then
+    echo "Unknown daemon: ${daemon}. Collected daemons:" >&2
+    list_collected_daemons >&2
+    exit 1
+fi
+
+if [ -z "$1" -o "$1" = help ]; then
+    echo "Commands:"
+    echo
+    print_daemon_commands "${daemon}"
+    echo
+    exit 0
+fi
+
+asock_cmd "${daemon}" "$@"

@@ -17,6 +17,10 @@ info() {
     echo "$*" >&2
 }
 
+list_running_daemons() {
+    cephadm ls | jq -r '.[] | select(.state == "running") | .name'
+}
+
 collect_info_from_daemon() {
     local daemon=$1
 
@@ -28,31 +32,43 @@ collect_info_from_daemon() {
     local ceph_daemon_cmd="cephadm enter --name ${daemon} -- ceph daemon ${daemon}"
 
     case "${daemon}" in
-    mds.*)
+    mds.*|mgr.*|mon.*|osd.*)
+	${ceph_daemon_cmd} config diff > ${resdir}/ceph-daemon-config-diff 2>&1
 	${ceph_daemon_cmd} config show > ${resdir}/ceph-daemon-config 2>&1
 	${ceph_daemon_cmd} perf dump > ${resdir}/ceph-daemon-perf 2>&1
+	${ceph_daemon_cmd} dump_mempools > ${resdir}/ceph-daemon-dump-mempools 2>&1
+        ;;
+    esac
+
+    case "${daemon}" in
+    mds.*)
+        ${ceph_daemon_cmd} cache status > ${resdir}/ceph-daemon-cache-status 2>&1
+        ${ceph_daemon_cmd} dump loads > ${resdir}/ceph-daemon-dump-loads 2>&1
         ${ceph_daemon_cmd} dump_historic_ops > ${resdir}/ceph-daemon-historic_ops 2>&1
         ${ceph_daemon_cmd} dump_ops_in_flight > ${resdir}/ceph-daemon-ops_in_flight 2>&1
-        ${ceph_daemon_cmd} status > ${resdir}/ceph-daemon-status 2>&1
         ${ceph_daemon_cmd} get subtrees > ${resdir}/ceph-daemon-subtrees 2>&1
+        ${ceph_daemon_cmd} scrub status > ${resdir}/ceph-daemon-scrub-status 2>&1
+        ${ceph_daemon_cmd} session ls > ${resdir}/ceph-daemon-session-ls 2>&1
+        ${ceph_daemon_cmd} status > ${resdir}/ceph-daemon-status 2>&1
         ;;
     mgr.*)
-	${ceph_daemon_cmd} config show > ${resdir}/ceph-daemon-config 2>&1
-	${ceph_daemon_cmd} perf dump > ${resdir}/ceph-daemon-perf 2>&1
         ${ceph_daemon_cmd} status > ${resdir}/ceph-daemon-status 2>&1
         ;;
     mon.*)
-	${ceph_daemon_cmd} config show > ${resdir}/ceph-daemon-config 2>&1
-	${ceph_daemon_cmd} perf dump > ${resdir}/ceph-daemon-perf 2>&1
         ${ceph_daemon_cmd} dump_historic_ops > ${resdir}/ceph-daemon-historic_ops 2>&1
+        ${ceph_daemon_cmd} mon_status > ${resdir}/ceph-daemon-mon-status 2>&1
+        ${ceph_daemon_cmd} sessions > ${resdir}/ceph-daemon-sessions 2>&1
         ;;
     osd.*)
-	${ceph_daemon_cmd} config show > ${resdir}/ceph-daemon-config 2>&1
-	${ceph_daemon_cmd} perf dump > ${resdir}/ceph-daemon-perf 2>&1
+        ${ceph_daemon_cmd} bluefs stats > ${resdir}/ceph-daemon-bluefs-stats 2>&1
+        ${ceph_daemon_cmd} bluestore allocator fragmentation block > ${resdir}/ceph-daemon-bluestore-allocator-fragmentation-block 2>&1
+        ${ceph_daemon_cmd} bluestore allocator score block > ${resdir}/ceph-daemon-bluestore-allocator-score-block 2>&1
+        ${ceph_daemon_cmd} bluestore bluefs device info > ${resdir}/ceph-daemon-bluestore-bluefs-device-info 2>&1
+        ${ceph_daemon_cmd} cache status > ${resdir}/ceph-daemon-cache-status 2>&1
         ${ceph_daemon_cmd} dump_historic_ops > ${resdir}/ceph-daemon-historic_ops 2>&1
         ${ceph_daemon_cmd} dump_ops_in_flight > ${resdir}/ceph-daemon-ops_in_flight 2>&1
-        ${ceph_daemon_cmd} status > ${resdir}/ceph-daemon-status 2>&1
         ${ceph_daemon_cmd} dump_watchers > ${resdir}/ceph-daemon-watchers 2>&1
+        ${ceph_daemon_cmd} status > ${resdir}/ceph-daemon-status 2>&1
         ;;
     esac
 }
@@ -70,8 +86,7 @@ for crash in /var/lib/ceph/*/crash ; do
     test -d "${crash}" && cp -a "${crash}" ${RESULTS_DIR}/crash
 done
 
-running_daemons=$(cephadm ls | jq -r '.[] | select(.state == "running") | .name')
-for daemon in ${running_daemons}; do
+for daemon in $(list_running_daemons); do
     info "collecting daemon ${daemon} info ..."
     collect_info_from_daemon "${daemon}"
 done

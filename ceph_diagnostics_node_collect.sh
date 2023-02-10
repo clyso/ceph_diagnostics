@@ -6,6 +6,7 @@
 
 RESULTS_DIR=$(mktemp -d /tmp/ceph-collect-$(hostname)_$(date +%Y%m%d_%H%I%S)-XXX)
 RESULT_ARCHIVE=${RESULTS_DIR}.tar.gz
+CEPHADM_CMD=cephadm
 
 trap cleanup INT TERM EXIT
 
@@ -17,8 +18,25 @@ info() {
     echo "$*" >&2
 }
 
+set_cephadm_cmd() {
+    local fsid='*'
+    local cephadm
+
+    if [ -r /etc/ceph/ceph.conf ]; then
+	fsid=$(awk '$1 == "fsid" {print $3}' /etc/ceph/ceph.conf)
+    fi
+
+    cephadm=$(ls -t /var/lib/ceph/${fsid}/cephadm.* | head -1)
+
+    if [ -n "${cephadm}" ]; then
+	CEPHADM_CMD="python3 ${cephadm}"
+    else
+	info "WANRING: failed to find deployed cephadm binary. Expecting to find ${cephadm} in PATH"
+    fi
+}
+
 list_running_daemons() {
-    cephadm ls | jq -r '.[] | select(.state == "running") | .name'
+    ${CEPHADM_CMD} ls | jq -r '.[] | select(.state == "running") | .name'
 }
 
 collect_info_from_daemon() {
@@ -29,7 +47,7 @@ collect_info_from_daemon() {
     local resdir=${RESULTS_DIR}/daemons/"${daemon}"
     mkdir ${resdir}
 
-    local ceph_daemon_cmd="cephadm enter --name ${daemon} -- ceph daemon ${daemon}"
+    local ceph_daemon_cmd="${CEPHADM_CMD} enter --name ${daemon} -- ceph daemon ${daemon}"
 
     case "${daemon}" in
     mds.*|mgr.*|mon.*|osd.*)
@@ -73,12 +91,13 @@ collect_info_from_daemon() {
     esac
 }
 
+set_cephadm_cmd
+
 info "collecting cephadm status ..."
-{
-    cephadm ls 2>&1
-    cephadm check-host 2>&1
-    cephadm inspect-image 2>&1
-} > ${RESULTS_DIR}/cephadm-status
+echo ${CEPHADM_CMD} > ${RESULTS_DIR}/cephadm_cmd
+${CEPHADM_CMD} ls > ${RESULTS_DIR}/cephadm-ls 2>&1
+${CEPHADM_CMD} check-host > ${RESULTS_DIR}/cephadm-check-host 2>&1
+${CEPHADM_CMD} inspect-image > ${RESULTS_DIR}/cephadm-inspect-image 2>&1
 
 info "collecting crash info ..."
 mkdir ${RESULTS_DIR}/crash
@@ -92,9 +111,9 @@ for daemon in $(list_running_daemons); do
 done
 
 info "collecting ceph-volume info ..."
-cephadm ceph-volume lvm list 2>&1 > ${RESULTS_DIR}/ceph-volume-list
-cephadm ceph-volume inventory --format json-pretty 2>&1 > ${RESULTS_DIR}/ceph-volume-inventory.json
-cephadm ceph-volume inventory 2>&1 > ${RESULTS_DIR}/ceph-volume-inventory
+${CEPHADM_CMD} ceph-volume lvm list > ${RESULTS_DIR}/ceph-volume-list 2>&1
+${CEPHADM_CMD} ceph-volume inventory --format json-pretty > ${RESULTS_DIR}/ceph-volume-inventory.json 2>&1
+${CEPHADM_CMD} ceph-volume inventory > ${RESULTS_DIR}/ceph-volume-inventory 2>&1
 
 mkdir -p ${RESULTS_DIR}/log
 
@@ -103,10 +122,10 @@ if [ -d /var/log/ceph ]; then
     find /var/log/ceph -type f -exec cp '{}' ${RESULTS_DIR}/log ';'
 fi
 
-cephadm ls | jq -r '.[] | "\(.fsid) \(.name)"' |
+${CEPHADM_CMD} ls | jq -r '.[] | "\(.fsid) \(.name)"' |
 while read fsid name ; do
     info "collecting daemon ${name} journal log ..."
-    cephadm logs --fsid ${fsid} --name ${name} > ${RESULTS_DIR}/log/${name}.log 2>&1
+    ${CEPHADM_CMD} logs --fsid ${fsid} --name ${name} > ${RESULTS_DIR}/log/${name}.log 2>&1
 done
 
 tar -czf ${RESULT_ARCHIVE} -C $(dirname ${RESULTS_DIR}) $(basename ${RESULTS_DIR})

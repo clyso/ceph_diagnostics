@@ -71,7 +71,7 @@ def pool(pools):
             info += ' erasure {}'.format(profile_name)
             profile = report['osdmap']['erasure_code_profiles'].get(profile_name)
             if profile:
-                info += ' {}x{}'.format(profile['k'], profile['m'])
+                info += ' {}+{}'.format(profile['k'], profile['m'])
         else:
             info += ' <UNKNOWN TYPE {}>'.format(pool['type'])
 

@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import sys
+
+sys.path.append(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from common import get_report
+
+#
+# Global
+#
+
+cmd_description='generate diagnostic report'
+
+parser = argparse.ArgumentParser(prog='cds report', description=cmd_description)
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def get_usage(report):
+    usage = {}
+    total = report['pool_sum']['stat_sum']['num_bytes']
+
+    for pool in report['pool_stats']:
+        usage[pool['poolid']] = 100 * pool['stat_sum']['num_bytes'] / total
+
+    return usage
+
+
+def report():
+    ceph_report = get_report()
+    if ceph_report is None:
+        return
+
+    usage = get_usage(ceph_report)
+    re_pool_count = 0
+    ec_pool_count = 0
+    re_pool_usage = 0
+    ec_pool_usage = 0
+    app_stats = {}
+
+    warnings = []
+
+    for pool in ceph_report['osdmap']['pools']:
+        pool_id = pool['pool']
+
+        if  pool['type'] == 1:
+            re_pool_count += 1
+            re_pool_usage += usage[pool_id]
+            if pool['min_size'] < 2:
+                warnings.append(
+                    f'replicated pool {pool["pool_name"]} has min_size {pool["min_size"]} (min 2 is recommended)'
+                )
+        elif pool['type'] == 3:
+            ec_pool_count += 1
+            ec_pool_usage += usage[pool_id]
+            profile_name = pool['erasure_code_profile']
+            profile = ceph_report['osdmap']['erasure_code_profiles'].get(profile_name)
+            expected_min_size = int(profile['k']) + 1
+            if profile and pool['min_size'] < expected_min_size:
+                warnings.append(
+                    f'erasure {profile["k"]}+{profile["m"]} pool {pool["pool_name"]} has min_size {pool["min_size"]} (min {expected_min_size} is recommended)'
+                )
+
+        for app in pool.get('application_metadata', {'unknown' : 1}):
+            if app not in app_stats:
+                app_stats[app] = {'count' : 0, 'usage' : 0}
+            app_stats[app]['count'] += 1
+            app_stats[app]['usage'] += usage[pool_id]
+
+    osd_metadata = ceph_report['osd_metadata']
+    hdd_osd_count = len(
+        [osd for osd in osd_metadata if int(osd.get('bluefs_db_rotational', 0))]
+    )
+    if hdd_osd_count > 0:
+        warnings.append(
+            f'{hdd_osd_count} osds has bluefs db on rotational disk'
+        )
+
+    print(f'pools: replicated/erasure: {re_pool_count}/{ec_pool_count} (usage: {int(re_pool_usage)}%/{int(ec_pool_usage)}%)\n')
+
+    if app_stats:
+        print('applications:')
+        for app, s in app_stats.items():
+            print(f'  {app:<18}: {s["count"]} pools ({int(s["usage"])}% usage)')
+        print()
+
+    if warnings:
+        print('warnings:')
+        for w in warnings:
+            print(f'  {w}')
+        print()
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    report()
+
+
+#
+# main
+#
+
+main()

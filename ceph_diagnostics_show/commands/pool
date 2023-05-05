@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import sys
+
+sys.path.append(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from common import get_report
+
+#
+# Global
+#
+
+cmd_description='show pool info'
+
+parser = argparse.ArgumentParser(prog='cds pool', description=cmd_description)
+parser.add_argument(
+    'pool',
+    metavar='pool',
+    help='pool name or ID',
+    nargs='*',
+    default=None,
+)
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def get_usage(report):
+    usage = {}
+    total = report['pool_sum']['stat_sum']['num_bytes']
+
+    for pool in report['pool_stats']:
+        usage[pool['poolid']] = 100 * pool['stat_sum']['num_bytes'] / total
+
+    return usage
+
+
+def pool(pools):
+    report = get_report()
+    if report is None:
+        return
+
+    usage = get_usage(report)
+
+    header = '{:>2} {:<30} {:>3} {:>5}/{:<5} {:>2}/{:<2}'.format(
+        'ID', 'NAME', '%U', 'PG', 'PGP', 'SZ', 'MS')
+    print(header)
+
+    for pool in report['osdmap']['pools']:
+        if pools and \
+           str(pool['pool']) not in pools and pool['pool_name'] not in pools:
+            continue
+
+        pool_id = pool['pool']
+        info = '{:>2} {:<30} {:>3} {:>5}/{:<5} {:>2}/{:<2}'.format(
+            pool_id, pool['pool_name'], int(usage[pool_id]), pool['pg_num'],
+            pool['pg_placement_num'], pool['size'], pool['min_size'])
+
+        if  pool['type'] == 1:
+            info += ' replicated'
+        elif pool['type'] == 3:
+            profile_name = pool['erasure_code_profile']
+            info += ' erasure {}'.format(profile_name)
+            profile = report['osdmap']['erasure_code_profiles'].get(profile_name)
+            if profile:
+                info += ' {}+{}'.format(profile['k'], profile['m'])
+        else:
+            info += ' <UNKNOWN TYPE {}>'.format(pool['type'])
+
+        if 'crush_rule' in pool:
+            crush_rule = pool['crush_rule']
+            for r in report['crushmap']['rules']:
+                if r['rule_id'] == crush_rule:
+                    crush_rule = r['rule_name']
+                    break
+        elif 'crush_ruleset' in pool:
+            crush_rule = pool['crush_ruleset']
+            for r in report['crushmap']['rules']:
+                if r['ruleset'] == crush_rule:
+                    crush_rule = r['rule_name']
+                    break
+        else:
+            crush_rule = '<UNKNOWN>'
+        info += ' {}'.format(crush_rule)
+
+        if pool['tier_of'] >= 0:
+            tier_of = pool['tier_of']
+            for pool in report['osdmap']['pools']:
+                if pool['pool'] == tier_of:
+                    tier_of = pool['pool_name']
+                    break
+            info += ' tier_of:{}'.format(tier_of)
+
+        if pool['read_tier'] >= 0 or pool['write_tier'] >= 0:
+            tier = pool['read_tier'] >= 0 and \
+                pool['read_tier'] or pool['write_tier']
+            for pool in report['osdmap']['pools']:
+                if pool['pool'] == tier:
+                    tier = pool['pool_name']
+                    break
+            info += ' tier:{}'.format(tier)
+
+        applications = ' '.join(pool.get('application_metadata', {}).keys())
+        if applications:
+            info += ' [{}]'.format(applications)
+
+        print(info)
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+
+    pool(args.pool)
+
+
+#
+# main
+#
+
+main()

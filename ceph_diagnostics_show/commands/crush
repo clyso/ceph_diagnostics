@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import sys
+
+sys.path.append(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from common import get_report
+
+#
+# Global
+#
+
+cmd_description="show ceph crush info"
+
+parser = argparse.ArgumentParser(prog="cds crush", description=cmd_description)
+parser.add_argument(
+    "command",
+    metavar="dump|ls|rule ls|rule dump",
+    help="command",
+    nargs="?",
+    default=None,
+)
+parser.add_argument(
+    "args",
+    nargs=argparse.REMAINDER
+)
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def get_crushmap():
+    report = get_report()
+    if report is None:
+        return None
+    return report["crushmap"]
+
+def crush_dump():
+    crush = get_crushmap()
+    print(json.dumps(crush, indent=2))
+
+def print_bucket(b, detail):
+    if detail:
+        print("{:<20} [{} {:>8} {:>12} {} {}]".format(
+            b["name"], b["type_name"], b["id"], b["weight"], b["alg"],
+            b["hash"]))
+    else:
+        print(b["name"])
+
+def print_device(d, weight, detail):
+    if detail:
+        print("{:<20} [device {:>8} {:>12}   {}]".format(
+            d["name"], d["id"], weight, d.get("class", "--")))
+    else:
+        print(d["name"])
+
+def crush_list(args):
+    detail = False
+    bucket_name = None
+
+    if '-l' in args:
+        args = [a for a in args if a != '-l']
+        detail = True
+    if args:
+        bucket_name = args[0]
+
+    crush = get_crushmap()
+
+    if not bucket_name:
+        for b in crush["buckets"]:
+            if b["type_name"] != "root":
+                continue
+            print_bucket(b, detail)
+        return
+
+    filtered_buckets = [b for b in crush["buckets"] if b["name"] == bucket_name]
+    if not filtered_buckets:
+        return
+
+    buckets = {b["id"]: b for b in crush["buckets"]}
+    devices = {d["id"]: d for d in crush["devices"]}
+
+    bucket = filtered_buckets[0]
+
+    for item in bucket["items"]:
+        id = item['id']
+        weight = item['weight']
+        if id < 0:
+            b = buckets.get(id, {"id" : id, "name" : str(id), "type_name" : "--",
+                                 "weight" : weight, "alg" : "--", "hash" : "--"})
+            print_bucket(b, detail)
+        else:
+            d = devices.get(id, {"id" : id, "name" : str(id)})
+            print_device(d, weight, detail)
+
+def crush_rule(args):
+    crush = get_crushmap()
+    rules = crush["rules"]
+    if not args or args[0] in ("ls", "list"):
+        for r in rules:
+            print("{:>2} {}".format(r["rule_id"], r["rule_name"]))
+    elif args[0] == "dump":
+        ids = args[1:]
+        if ids:
+            rules = [r for r in rules if str(r["rule_id"]) in ids]
+        print(json.dumps(rules, indent=2))
+    else:
+        print("invalid command: {}".format(args[0]), file=sys.stderr)
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "description":
+            description()
+            exit(0)
+        elif sys.argv[1] == "help":
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+
+    if not args.command or args.command == "dump":
+        crush_dump()
+    elif args.command in ("ls", "list"):
+        crush_list(args.args)
+    elif args.command == "rule":
+        crush_rule(args.args)
+    else:
+        print("invalid command: {}".format(args.command), file=sys.stderr)
+
+#
+# main
+#
+
+main()

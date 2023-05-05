@@ -1,0 +1,128 @@
+#!/bin/sh
+
+DAEMON_NAME='*'
+
+description() {
+    echo "print mds admin socket command output or processed result"
+}
+
+help() {
+    description
+    echo ""
+    echo "supported admin socket commands:"
+    echo ""
+    echo "  cache_status"
+    echo "  dump_historic_ops"
+    echo "  dump_loads"
+    echo "  dump_mempools"
+    echo "  dump_ops_in_flight"
+    echo "  perf_dump"
+    echo "  scrub_status"
+    echo "  session_ls"
+    echo "  status"
+    echo ""
+    echo "derived commands:"
+    echo ""
+    echo "  session ls"
+    echo "  session info <id>"
+    echo "  session stats <id>"
+    echo ""
+    echo "options:"
+    echo ""
+    echo " -d <daemon>  print for this daemon"
+}
+
+asock_cmd() {
+    local cmd=$1
+    local file="$(ls ${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-mds.${DAEMON_NAME}_${cmd} | head -1)"
+
+    if [ -z "${file}" ]; then
+	echo "failed to find fs_info-mds.${DAEMON_NAME}_${cmd} file in collect dir" >&2
+	return 1
+    fi
+
+    cat "${file}"
+}
+
+session() {
+    local cmd=$1
+
+    case "${cmd}" in
+	ls)
+            session_ls
+            ;;
+	info)
+	    session_info $2
+            ;;
+	stats)
+	    session_stats $2
+            ;;
+	*)
+	    echo "invalid session command: '${cmd}'" >&2
+	    echo "" >&2
+            help >&2
+            exit 1
+            ;;
+    esac
+}
+
+session_ls() {
+    asock_cmd session_ls |
+	jq -r 'map(.inst + "\t" + .client_metadata.hostname + ":" + .client_metadata.root) | .[]'
+}
+
+session_info() {
+    local id=$1
+
+    session_stats ${id} | jq -r '. |
+      ["id:             ", .id],
+      ["inst:           ", .inst],
+      ["state:          ", .state],
+      ["entity_id:      ", .client_metadata.entity_id],
+      ["hostname:       ", .client_metadata.hostname],
+      ["root:           ", .client_metadata.root],
+      ["num_leases:     ", .num_leases],
+      ["num_caps:       ", .num_caps],
+      ["recall_caps:    ", .recall_caps.value],
+      ["release_caps:   ", .release_caps.value],
+      ["cache_liveness: ", .session_cache_liveness.value]
+        | @tsv'
+}
+
+session_stats() {
+    local id=$1
+
+    asock_cmd session_ls | jq ".[] | select(.id == ${id})"
+}
+
+if [ "$1" = '-d' ]; then
+    shift
+    DAEMON_NAME="$1"
+    shift
+fi
+
+cmd="$1"
+shift 2>/dev/null
+
+case "${cmd}" in
+    description)
+        description
+        exit 0
+        ;;
+    help)
+        help
+        exit 0
+        ;;
+    cache_status|dump_historic_ops|dump_loads|dump_mempools|dump_ops_in_flight|perf_dump|scrub_status|session_ls|status)
+	asock_cmd "${cmd}"
+        ;;
+    session)
+	session "$@"
+        ;;
+    *)
+	echo "invalid or unsupported command: '${cmd}'" >&2
+	echo "" >&2
+        help >&2
+        exit 1
+        ;;
+esac

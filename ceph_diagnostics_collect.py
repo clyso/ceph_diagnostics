@@ -158,13 +158,19 @@ def get_ceph_info(handle, ceph_config, uncensored, timeout):
 
     if int(version) >= 13:
         config_dump = ceph_shell_command('config dump', timeout)
+        config_log = ceph_shell_command('config log', timeout)
         if uncensored:
             cluster['config_dump'] = config_dump
+            cluster['config_log'] = config_log
         else:
             cluster['config_dump'] = re.sub(r'(ACCESS_KEY|SECRET_KEY|PASSWORD).*',
                                             r'\1 <CENSORED>',
                                             config_dump.decode("utf-8"),
                                             flags=re.IGNORECASE).encode("utf-8")
+            cluster['config_log'] = re.sub(r'(ACCESS_KEY|SECRET_KEY|PASSWORD).*',
+                                           r'\1 <CENSORED>',
+                                           config_log.decode("utf-8"),
+                                           flags=re.IGNORECASE).encode("utf-8")
 
     auth_list = ceph_shell_command('auth list', timeout)
     if uncensored:

@@ -1,2 +1,4 @@
 .idea/
 venv/
+ceph_diagnostics_show/lib/__pycache__
+ceph_diagnostics_node_show/lib/__pycache__

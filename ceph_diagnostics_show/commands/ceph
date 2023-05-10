@@ -22,8 +22,7 @@ help() {
     echo "  fsid"
     echo "  health detail"
     echo "  health"
-    echo "  mds dump"
-    echo "  mds getmap"
+    echo "  mds metadata"
     echo "  mds stat"
     echo "  mgr dump"
     echo "  mgr metadata"
@@ -122,11 +121,8 @@ case "$cmd" in
     "mgr metadata")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-metadata"
         ;;
-    "mds dump")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/mds_info-dump"
-        ;;
-    "mds getmap")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/mds_info-map"
+    "mds metadata")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/mds_info-metadata"
         ;;
     "mds stat")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/mds_info-stat"

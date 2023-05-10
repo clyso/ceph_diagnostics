@@ -302,9 +302,8 @@ def get_mds_info(handle, timeout):
     :return:
     """
     mds_info = dict()
-    mds_info['dump'] = ceph_mon_command(handle, 'mds dump'  , timeout)
     mds_info['stat'] = ceph_mon_command(handle, 'mds stat'  , timeout)
-    mds_info['map']  = ceph_mon_command(handle, 'mds getmap', timeout)
+    mds_info['metadata'] = ceph_mon_command(handle, 'mds metadata', timeout)
     return mds_info
 
 

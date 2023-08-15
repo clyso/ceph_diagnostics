@@ -31,7 +31,7 @@ set_cephadm_cmd() {
     if [ -n "${cephadm}" ]; then
 	CEPHADM_CMD="python3 ${cephadm}"
     else
-	info "WANRING: failed to find deployed cephadm binary. Expecting to find ${cephadm} in PATH"
+	info "WANRING: failed to find deployed cephadm binary. Expecting to find ${CEPHADM_CMD} in PATH"
     fi
 }
 

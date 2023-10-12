@@ -38,6 +38,7 @@ help() {
     echo "  osd getmap"
     echo "  osd metadata"
     echo "  osd perf"
+    echo "  osd pool ls detail"
     echo "  osd tree"
     echo "  pg dump [--format json]"
     echo "  pg dump_stuck"
@@ -48,6 +49,8 @@ help() {
 }
 
 cmd="$@"
+file=
+filter_pattern=.
 
 case "$cmd" in
     description)
@@ -163,6 +166,10 @@ case "$cmd" in
     "osd perf")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-perf"
         ;;
+    "osd pool ls detail")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump"
+	filter_pattern='^pool [0-9]+ '
+	;;
     "osd stat")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-stat"
         ;;
@@ -190,4 +197,4 @@ if ! [ -e "${file}" ]; then
     exit 1
 fi
 
-cat $file
+cat "${file}" | grep -E "${filter_pattern}"

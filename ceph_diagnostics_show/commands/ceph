@@ -66,7 +66,7 @@ case "$cmd" in
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-auth_list"
         ;;
     "balancer status")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-balancer-status"
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-balancer-status"
         ;;
     "config dump")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-config_dump"

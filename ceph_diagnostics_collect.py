@@ -198,6 +198,7 @@ def get_health_info(handle, timeout):
     health['df']     = ceph_mon_command(handle, 'df'           , timeout)
     health['df-detail'] = ceph_shell_command('df detail', timeout)
     health['report'] = ceph_mon_command(handle, 'report'       , timeout)
+    health['balancer-status'] = ceph_mon_command(handle, 'balancer status', timeout)
 
     health['crash_ls'] = ceph_shell_command('crash ls', timeout)
     for id in filter(lambda id: id and id != 'ID',
@@ -285,11 +286,10 @@ def get_pg_info(handle, timeout, query_inactive_pg):
     :return:
     """
     pg_info = dict()
-    pg_info['stat']            = ceph_mon_command(handle, 'pg stat'        , timeout)
-    pg_info['dump']            = ceph_mon_command(handle, 'pg dump'        , timeout)
-    pg_info['dump_stuck']      = ceph_mon_command(handle, 'pg dump_stuck'  , timeout)
-    pg_info['dump_json']       = ceph_shell_command('pg dump --format json', timeout)
-    pg_info['balancer-status'] = ceph_mon_command(handle, 'balancer status', timeout)
+    pg_info['stat']       = ceph_mon_command(handle, 'pg stat'        , timeout)
+    pg_info['dump']       = ceph_mon_command(handle, 'pg dump'        , timeout)
+    pg_info['dump_stuck'] = ceph_mon_command(handle, 'pg dump_stuck'  , timeout)
+    pg_info['dump_json']  = ceph_shell_command('pg dump --format json', timeout)
 
     if query_inactive_pg:
         dump_inactive = ceph_shell_command('pg dump_stuck inactive',

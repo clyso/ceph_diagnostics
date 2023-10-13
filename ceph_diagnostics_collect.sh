@@ -101,12 +101,13 @@ get_health_info() {
 
     info "collecting cluster health info ..."
 
-    store ${t}-stat      ${CEPH} health
-    store ${t}-detail    ${CEPH} health detail
-    store ${t}-df        ${CEPH} df
-    store ${t}-df-detail ${CEPH} df detail
-    store ${t}-report    ${CEPH} report
-    store ${t}-crash_ls  ${CEPH} crash ls
+    store ${t}-stat            ${CEPH} health
+    store ${t}-detail          ${CEPH} health detail
+    store ${t}-df              ${CEPH} df
+    store ${t}-df-detail       ${CEPH} df detail
+    store ${t}-report          ${CEPH} report
+    store ${t}-crash_ls        ${CEPH} crash ls
+    store ${t}-balancer-status ${CEPH} balancer status
 
     show_stored ${t}-crash_ls | grep -o '^[0-9][^ ]*' |
     while read id; do
@@ -167,11 +168,10 @@ get_pg_info() {
 
     info "collecting pg info ..."
 
-    store ${t}-stat            ${CEPH} pg stat
-    store ${t}-dump            ${CEPH} pg dump
-    store ${t}-dump_stuck      ${CEPH} pg dump_stuck
-    store ${t}-dump_json       ${CEPH} pg dump --format json
-    store ${t}-balancer-status ${CEPH} balancer status
+    store ${t}-stat       ${CEPH} pg stat
+    store ${t}-dump       ${CEPH} pg dump
+    store ${t}-dump_stuck ${CEPH} pg dump_stuck
+    store ${t}-dump_json  ${CEPH} pg dump --format json
 
     if [ "$QUERY_INACTIVE_PG" = Y ]; then
 	store ${t}-dump_stuck_inactive ${CEPH} pg dump_stuck inactive

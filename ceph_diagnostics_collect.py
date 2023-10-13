@@ -278,10 +278,11 @@ def get_pg_info(handle, timeout, query_inactive_pg):
     :return:
     """
     pg_info = dict()
-    pg_info['stat']       = ceph_mon_command(handle, 'pg stat'      , timeout)
-    pg_info['dump']       = ceph_mon_command(handle, 'pg dump'      , timeout)
-    pg_info['dump_stuck'] = ceph_mon_command(handle, 'pg dump_stuck', timeout)
-    pg_info['dump_json']  = ceph_shell_command('pg dump --format json', timeout)
+    pg_info['stat']            = ceph_mon_command(handle, 'pg stat'        , timeout)
+    pg_info['dump']            = ceph_mon_command(handle, 'pg dump'        , timeout)
+    pg_info['dump_stuck']      = ceph_mon_command(handle, 'pg dump_stuck'  , timeout)
+    pg_info['dump_json']       = ceph_shell_command('pg dump --format json', timeout)
+    pg_info['balancer-status'] = ceph_mon_command(handle, 'balancer status', timeout)
 
     if query_inactive_pg:
         dump_inactive = ceph_shell_command('pg dump_stuck inactive',

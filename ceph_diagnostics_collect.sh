@@ -165,10 +165,11 @@ get_pg_info() {
 
     info "collecting pg info ..."
 
-    store ${t}-stat       ${CEPH} pg stat
-    store ${t}-dump       ${CEPH} pg dump
-    store ${t}-dump_stuck ${CEPH} pg dump_stuck
-    store ${t}-dump_json  ${CEPH} pg dump --format json
+    store ${t}-stat            ${CEPH} pg stat
+    store ${t}-dump            ${CEPH} pg dump
+    store ${t}-dump_stuck      ${CEPH} pg dump_stuck
+    store ${t}-dump_json       ${CEPH} pg dump --format json
+    store ${t}-balancer-status ${CEPH} balancer status
 
     if [ "$QUERY_INACTIVE_PG" = Y ]; then
 	store ${t}-dump_stuck_inactive ${CEPH} pg dump_stuck inactive

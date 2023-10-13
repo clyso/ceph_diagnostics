@@ -266,6 +266,13 @@ def get_osd_info(handle, timeout):
     osd_info['map']      = ceph_mon_command(handle, 'osd getmap'     , timeout)
     osd_info['metadata'] = ceph_mon_command(handle, 'osd metadata'   , timeout)
     osd_info['perf']     = ceph_mon_command(handle, 'osd perf'       , timeout)
+
+    if osd_info['crushmap']:
+        p = subprocess.Popen(['crushtool', '-d', '-'],
+                             stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE)
+        osd_info['crushmap.txt'] = p.communicate(input=osd_info['crushmap'])[0]
+
     return osd_info
 
 

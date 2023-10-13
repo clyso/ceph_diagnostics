@@ -157,6 +157,8 @@ get_osd_info() {
     store ${t}-map      ${CEPH} osd getmap
     store ${t}-metadata ${CEPH} osd metadata
     store ${t}-perf     ${CEPH} osd perf
+
+    show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
 }
 
 get_pg_info() {

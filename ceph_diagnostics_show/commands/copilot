@@ -1,0 +1,46 @@
+#!/bin/sh
+
+CEPH_COPILOT="${CEPH_COPILOT:-copilot}"
+
+description() {
+    echo "run copilot command"
+}
+
+help() {
+    description
+    echo ""
+    echo "supported commands:"
+    echo ""
+    echo "  checkup [-v|--verbose]"
+    echo ""
+}
+
+checkup() {
+    local report_file="$1"
+    local verbose="$2"
+
+    eval ${CEPH_COPILOT} checkup --ceph_report_json="${report_file}" ${verbose}
+}
+
+cmd="$@"
+
+case "$cmd" in
+    description)
+        description
+        exit 0
+        ;;
+    help)
+        help
+        exit 0
+        ;;
+    "checkup")
+	checkup "${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-report"
+        ;;
+    "checkup -v"|"checkup --verbose")
+	checkup "${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-report" --verbose
+        ;;
+    *)
+	echo "invalid or unsupported copilot command: $cmd" >&2
+        exit 1
+        ;;
+esac

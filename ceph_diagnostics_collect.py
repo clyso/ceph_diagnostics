@@ -357,10 +357,23 @@ def get_radosgw_admin_info(handle, timeout):
     """
     radosgw_admin_info = dict()
 
-    osd_dump = ceph_shell_command("osd dump", timeout)
-    if not re.search('^pool .* application rgw', osd_dump.decode('utf-8'),
-                     re.MULTILINE):
+    pool_ls = ceph_shell_command(
+        "osd pool ls detail", timeout).decode('utf-8')
+    if not re.search('^pool .* application rgw', pool_ls, re.MULTILINE):
         LOGGER.debug('skipping radosgw_admin_info: no rgw pools found')
+        return radosgw_admin_info
+
+    root_pool = ceph_shell_command(
+        "config get client.admin rgw_realm_root_pool",
+        timeout
+    ).decode('utf-8').strip()
+
+    if not root_pool:
+        LOGGER.debug('skipping radosgw_admin_info: no root pool configured')
+        return radosgw_admin_info
+
+    if not re.search(f"^pool [0-9]+ '{root_pool}'", pool_ls, re.MULTILINE):
+        LOGGER.debug('skipping radosgw_admin_info: no rgw root pool found')
         return radosgw_admin_info
 
     radosgw_admin_info['bucket_stats'] = shell_command('radosgw-admin bucket stats') + b'\n'

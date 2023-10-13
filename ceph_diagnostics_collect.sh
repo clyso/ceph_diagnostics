@@ -223,6 +223,14 @@ get_radosgw_admin_info() {
 	return
     fi
 
+    root_pool=$(${CEPH} config get client.admin rgw_realm_root_pool)
+    if [ -z "${root_pool}" ]; then
+	return
+    fi
+    if ! ${CEPH} osd pool ls | fgrep -q "${root_pool}"; then
+	return
+    fi
+
     info "collecting radosgw info ..."
 
     store ${t}-bucket_stats                  ${RADOSGW_ADMIN} bucket stats

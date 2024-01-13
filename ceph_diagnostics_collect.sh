@@ -236,6 +236,8 @@ get_radosgw_admin_info() {
     store ${t}-bucket_stats                  ${RADOSGW_ADMIN} bucket stats
     store ${t}-bucket_limit_check            ${RADOSGW_ADMIN} bucket limit check
     store ${t}-metadata_list_bucket.instance ${RADOSGW_ADMIN} metadata list bucket.instance
+    store ${t}-period_get                    ${RADOSGW_ADMIN} period get
+    store ${t}-sync_status                   ${RADOSGW_ADMIN} sync status
 }
 
 get_orch_info() {

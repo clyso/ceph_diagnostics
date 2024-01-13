@@ -393,7 +393,10 @@ def get_orch_info(handle, timeout):
     :return:
     """
     orch_info = dict()
-    orch_info['status'] = ceph_shell_command('orch status', timeout)
+    orch_info['status']  = ceph_shell_command('orch status', timeout)
+    orch_info['ls']      = ceph_shell_command('orch ls', timeout)
+    orch_info['ls_yaml'] = ceph_shell_command('orch ls --format yaml', timeout)
+    orch_info['ps']      = ceph_shell_command('orch ps', timeout)
     return orch_info
 
 

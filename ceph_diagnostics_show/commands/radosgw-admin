@@ -1,0 +1,83 @@
+#!/bin/sh
+
+description() {
+    echo "print radosgw-admin command output"
+}
+
+help() {
+    description
+    echo ""
+    echo "supported commands:"
+    echo ""
+    echo "  bucket limit check [user_id [bucket]]"
+    echo "  bucket stats [bucket]"
+    echo "  metadata list bucket.instance"
+    echo "  period get"
+    echo "  sync status"
+}
+
+bucket_limit_check_filter() {
+    local user_id="$1"
+    local bucket="$2"
+
+    if [ -n "$bucket" ]; then
+	jq ".[] | select(.user_id == \"${user_id}\") | .buckets[] | select(.bucket == \"${bucket}\")"
+    elif [ -n "$user_id" ]; then
+	jq ".[] | select(.user_id == \"${user_id}\")"
+    else
+	jq ".[]"
+    fi
+}
+
+bucket_stats_filter() {
+    local bucket="$1"
+
+    if [ -n "$bucket" ]; then
+	jq ".[] | select(.bucket == \"${bucket}\")"
+    else
+	jq ".[]"
+    fi
+}
+
+cmd="$@"
+file=
+filter=cat
+
+case "$cmd" in
+    description)
+        description
+        exit 0
+        ;;
+    help)
+        help
+        exit 0
+        ;;
+    "bucket limit check"|"bucket limit check "*)
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-bucket_limit_check"
+	filter="bucket_limit_check_filter ${cmd#bucket limit check}"
+        ;;
+    "bucket stats"|"bucket stats "*)
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-bucket_stats"
+	filter="bucket_stats_filter ${cmd#bucket stats}"
+        ;;
+    "metadata list bucket.instance")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-metadata_list_bucket.instance"
+        ;;
+    "period get")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-period_get"
+        ;;
+    "sync status")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-sync_status"
+        ;;
+    *)
+	echo "invalid or unsupported radosgw-admin command: $cmd" >&2
+        exit 1
+        ;;
+esac
+
+if ! [ -e "${file}" ]; then
+    echo "${cmd} is not available: cannot find ${file}" >&2
+    exit 1
+fi
+
+cat "${file}" | ${filter}

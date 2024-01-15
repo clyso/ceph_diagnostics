@@ -37,7 +37,7 @@ help() {
     echo "  osd dump"
     echo "  osd getcrushmap"
     echo "  osd getmap"
-    echo "  osd metadata"
+    echo "  osd metadata [id]"
     echo "  osd perf"
     echo "  osd pool ls detail"
     echo "  osd tree"
@@ -49,9 +49,23 @@ help() {
     echo "  versions"
 }
 
+osd_pool_ls_detail_filter() {
+    grep -E '^pool [0-9]+ '
+}
+
+osd_metadata_filter() {
+    local id="$1"
+
+    if [ -n "$id" ]; then
+	jq ".[] | select(.id == ${id})"
+    else
+	jq ".[]"
+    fi
+}
+
 cmd="$@"
 file=
-filter_pattern=.
+filter=cat
 
 case "$cmd" in
     description)
@@ -164,15 +178,16 @@ case "$cmd" in
     "osd getmap")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-map"
         ;;
-    "osd metadata")
+    "osd metadata"|"osd metadata "[0-9]*)
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-metadata"
+	filter="osd_metadata_filter ${cmd#osd metadata}"
         ;;
     "osd perf")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-perf"
         ;;
     "osd pool ls detail")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump"
-	filter_pattern='^pool [0-9]+ '
+	filter=osd_pool_ls_detail_filter
 	;;
     "osd stat")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-stat"
@@ -201,4 +216,4 @@ if ! [ -e "${file}" ]; then
     exit 1
 fi
 
-cat "${file}" | grep -E "${filter_pattern}"
+cat "${file}" | ${filter}

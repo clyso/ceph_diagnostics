@@ -379,6 +379,8 @@ def get_radosgw_admin_info(handle, timeout):
     radosgw_admin_info['bucket_stats'] = shell_command('radosgw-admin bucket stats') + b'\n'
     radosgw_admin_info['bucket_limit_check'] = shell_command('radosgw-admin bucket limit check') + b'\n'
     radosgw_admin_info['metadata_list_bucket.instance'] = shell_command('radosgw-admin metadata list bucket.instance') + b'\n'
+    radosgw_admin_info['period_get'] = shell_command('radosgw-admin period get') + b'\n'
+    radosgw_admin_info['sync_status'] = shell_command('radosgw-admin sync status') + b'\n'
 
     return radosgw_admin_info
 
@@ -391,7 +393,10 @@ def get_orch_info(handle, timeout):
     :return:
     """
     orch_info = dict()
-    orch_info['status'] = ceph_shell_command('orch status', timeout)
+    orch_info['status']  = ceph_shell_command('orch status', timeout)
+    orch_info['ls']      = ceph_shell_command('orch ls', timeout)
+    orch_info['ls_yaml'] = ceph_shell_command('orch ls --format yaml', timeout)
+    orch_info['ps']      = ceph_shell_command('orch ps', timeout)
     return orch_info
 
 

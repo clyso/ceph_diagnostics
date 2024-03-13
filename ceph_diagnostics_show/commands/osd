@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 
 sys.path.append(os.path.join(
@@ -88,18 +89,23 @@ def osd_metadata(ids):
     print(json.dumps(m, indent=2))
 
 def osd_find(ids):
+    def get_addr(addr):
+        m = re.match(r'\[v[12]:([^/]+):(\d+)/\d+,v[12]:([^/]+):(\d+)/\d+\]', addr)
+        if m:
+            return f'{m.group(1)}:{m.group(2)},{m.group(4)}'
+        return addr.split("/")[0]
+
     m = get_osd_metadata(ids)
 
-    print("{}\t{}\t{}\t\t{}\t\t{}".format(
-        "OSD", "HOSTNAME", "DEV/DB", "FRONT_ADDR", "BACK_ADDR"))
     for osd in m:
-        print("osd.{}\t{}\t{:>4}/{:<4}\t{}\t{}".format(
+        print("osd.{} {} {} {} {} {}".format(
             osd["id"],
             osd["hostname"],
             osd.get("bluestore_bdev_dev_node", "--"),
             osd.get("bluefs_db_dev_node", "--"),
-            osd["front_addr"].split("/")[0],
-            osd["back_addr"].split("/")[0]))
+            get_addr(osd["front_addr"]),
+            get_addr(osd["back_addr"])
+        ))
 
 def main():
     if len(sys.argv) > 1:

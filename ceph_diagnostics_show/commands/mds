@@ -34,10 +34,10 @@ help() {
 
 asock_cmd() {
     local cmd=$1
-    local file="$(ls ${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-mds.${DAEMON_NAME}_${cmd} | head -1)"
+    local file="$(ls ${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-mds.${DAEMON_NAME}[-_]${cmd} | head -1)"
 
     if [ -z "${file}" ]; then
-	echo "failed to find fs_info-mds.${DAEMON_NAME}_${cmd} file in collect dir" >&2
+	echo "failed to find fs_info-mds.${DAEMON_NAME}-${cmd} file in collect dir" >&2
 	return 1
     fi
 
@@ -81,6 +81,9 @@ session_info() {
       ["entity_id:      ", .client_metadata.entity_id],
       ["hostname:       ", .client_metadata.hostname],
       ["root:           ", .client_metadata.root],
+      ["req_load_avg:   ", .request_load_avg],
+      ["uptime:         ", .uptime],
+      ["req_in_flight:  ", .requests_in_flight],
       ["num_leases:     ", .num_leases],
       ["num_caps:       ", .num_caps],
       ["recall_caps:    ", .recall_caps.value],

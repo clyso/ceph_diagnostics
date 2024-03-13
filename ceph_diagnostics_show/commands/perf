@@ -90,7 +90,7 @@ def main():
 
     perf = {}
     for fname in os.listdir(CEPH_DIAGNOSTICS_COLLECT_DIR):
-        m = re.match(r'^.*-(mds|mon|osd)\.(.+)_perf_dump', fname)
+        m = re.match(r'^.*-(mds|mon|osd)\.(.+)[-_]perf_dump$', fname)
         if not m:
             continue
         daemon_type = m.group(1)

@@ -1,0 +1,43 @@
+#!/bin/sh
+
+CLYSO_FSA="${CLYSO_FSA:-fsa}"
+
+description() {
+    echo "run fsa command"
+}
+
+help() {
+    description
+    echo ""
+    echo "supported commands:"
+    echo ""
+    echo "  full"
+    echo ""
+}
+
+full() {
+    local collect_dir="$1"
+
+    eval ${CLYSO_FSA} full --markdown --customer '"<CLYSO FSA CUSTOMER>"' \
+	 --ceph-collect-dir "${collect_dir}"
+}
+
+cmd="$@"
+
+case "$cmd" in
+    description)
+        description
+        exit 0
+        ;;
+    help)
+        help
+        exit 0
+        ;;
+    "full")
+	full "${CEPH_DIAGNOSTICS_COLLECT_DIR}"
+        ;;
+    *)
+	echo "invalid or unsupported fsa command: $cmd" >&2
+        exit 1
+        ;;
+esac

@@ -49,9 +49,10 @@ def find_by_addr(addresses):
                     return
 
         for osd in report['osdmap']['osds']:
-            for k in 'public_addr', 'cluster_addr', 'heartbeat_back_addr', \
-                'heartbeat_front_addr':
-                if re.search(pattern, osd.get(k, '')):
+            for k in 'public_addr', 'cluster_addr', \
+                'public_addrs', 'cluster_addrs', \
+                'heartbeat_back_addr', 'heartbeat_front_addr':
+                if re.search(pattern, str(osd.get(k, ''))):
                     print('osd.{}'.format(osd['osd']))
                     return
 

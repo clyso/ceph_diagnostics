@@ -30,22 +30,28 @@ get_osd_id() {
 ls_by_osd() {
     local id
     local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
+    local base=16
 
     id=$(get_osd_id $1) || exit 1
 
+    grep -q LOG_DUPS "${pgdump}" && base=$((base+1))
+
     awk '
-      $1 == "PG_STAT" || $1 ~ /^[0-9]+\./ && ($16 ~ /[,\[]'${id}'[,\]]/ || $18 ~ /[,\[]'${id}'[,\]]/)
+      $1 == "PG_STAT" || $1 ~ /^[0-9]+\./ && ($'${base}' ~ /[,\[]'${id}'[,\]]/ || $'$((base+2))' ~ /[,\[]'${id}'[,\]]/)
     ' "${pgdump}"
 }
 
 ls_by_primary() {
     local id
     local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
+    local base=17
 
     id=$(get_osd_id $1) || exit 1
 
+    grep -q LOG_DUPS "${pgdump}" && base=$((base+1))
+
     awk '
-      $1 == "PG_STAT" || $1 ~ /^[0-9]+\./ && ($17 == '${id}' || $19 == '${id}')
+      $1 == "PG_STAT" || $1 ~ /^[0-9]+\./ && ('${base}' == '${id}' || $'$((base+2))' == '${id}')
     ' "${pgdump}"
 }
 

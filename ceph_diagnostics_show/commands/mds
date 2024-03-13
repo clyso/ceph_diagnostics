@@ -34,10 +34,10 @@ help() {
 
 asock_cmd() {
     local cmd=$1
-    local file="$(ls ${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-mds.${DAEMON_NAME}_${cmd} | head -1)"
+    local file="$(ls ${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-mds.${DAEMON_NAME}[-_]${cmd} | head -1)"
 
     if [ -z "${file}" ]; then
-	echo "failed to find fs_info-mds.${DAEMON_NAME}_${cmd} file in collect dir" >&2
+	echo "failed to find fs_info-mds.${DAEMON_NAME}-${cmd} file in collect dir" >&2
 	return 1
     fi
 

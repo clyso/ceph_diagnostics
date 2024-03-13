@@ -81,6 +81,34 @@ stats() {
     jq ".pg_map.pg_stats[] | select(.pgid==\"${pgid}\")" < "${pgdump}"
 }
 
+scrub_stats() {
+    local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json"
+
+    if ! grep -q scrub_duration "${pgdump}"; then
+	echo "no scrub stats in pg dump" >&2
+	exit 1
+    fi
+
+    jq -r '.pg_map.pg_stats[] | (.pgid + " " + (.scrub_duration | tostring))' < "${pgdump}" |
+    awk '{
+      n++
+      sum += $2
+      pool = substr($1, 1, index($1, ".") - 1)
+      num[pool]++
+      sum_pool[pool] += $2
+    }
+    END {
+	  print "total number of pgs: " n
+	  print "total scrub duration: " sum " sec"
+	  print "average scrub duration: " sum / n " sec"
+	  print "per pool scrub duration:"
+	  for (p in num) {
+		print "  " p ": " sum_pool[p] " sec (" num[p] " pgs, " sum_pool[p] / num[p] " sec/pg)"
+	  }
+	}
+    '
+}
+
 case "$1" in
     description)
         description
@@ -90,7 +118,7 @@ case "$1" in
         help
         exit 0
         ;;
-    ls-by-osd|ls-by-primary|info|stats)
+    ls-by-osd|ls-by-primary|info|stats|scrub-stats)
         cmd="$(echo $1 | sed -e 's/-/_/g')"
         shift
         ${cmd} "$@"

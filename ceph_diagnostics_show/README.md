@@ -99,23 +99,27 @@ $ cds ceph status
     client:   9.0 MiB/s wr, 0 op/s rd, 4 op/s wr
 ``` 
 
-## Integrating ceph-copilot
+## Integrating ceph-copilot and clyso-fsa
 
-`ceph-copilot` is a @clyso internal Ceph analyzing tool. If you have
-access to it you may easily integrate it with `cds`. Just make sure
-the `copilot` command is in the `PATH` and running. For example:
+`ceph-copilot` and `clyso-fsa` are @clyso internal Ceph analyzing tools.
+If you have access to them you may easily integrate them with `cds`. Just
+make sure the `copilot` and `fsa` commands are in the `PATH` and running.
+For example:
 
 ```
 $ cd ~/clyso/ceph-copilot
 $ export PYTHONPATH=$(pwd)/src:$PYTHONPATH
 $ PATH=$(pwd)/copilot:$PATH
+$ cd ~/clyso/clyso-fsa
+$ PATH=$(pwd)/src:$PATH
 ```
 
-Alternatively you may set `CEPH_COPILOT` environment variable, like
-below:
+Alternatively you may set `CEPH_COPILOT` and `CLYSO_FSA` environment variables,
+like below:
 
 ```
 CEPH_COPILOT="PYTHONPATH=$HOME/clyso/ceph-copilot/src:$PYTHONPATH python3 $HOME/clyso/ceph-copilot/copilot/copilot"
+CLYSO_FSA="PYTHONPATH=$HOME/clyso/ceph-copilot/src:$PYTHONPATH python3 $HOME/clyso/clyso-fsa/src/fsa"
 ```
 
 After this the commands below should work:
@@ -123,6 +127,7 @@ After this the commands below should work:
 ```
 $ cds copilot checkup
 $ cds copilot checkup --verbose
+$ cds fsa full
 ```
 
 ## Adding a new command

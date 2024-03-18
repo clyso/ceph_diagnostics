@@ -92,7 +92,7 @@ get_ceph_info() {
     store ${t}-ceph_conf   cat ${CEPH_CONFIG_FILE}
     store ${t}-config_dump censor_config ${CEPH} config dump
     store ${t}-config_log  censor_config ${CEPH} config log
-    store ${t}-config_auth censor_auth ${CEPH} auth list
+    store ${t}-auth_list   censor_auth ${CEPH} auth list
 }
 
 get_health_info() {

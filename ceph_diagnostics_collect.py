@@ -258,15 +258,16 @@ def get_osd_info(handle, timeout):
     :return:
     """
     osd_info = dict()
-    osd_info['tree']     = ceph_mon_command(handle, 'osd tree'       , timeout)
-    osd_info['df']       = ceph_mon_command(handle, 'osd df'         , timeout)
-    osd_info['df-tree']  = ceph_shell_command('osd df tree'          , timeout)
-    osd_info['dump']     = ceph_mon_command(handle, 'osd dump'       , timeout)
-    osd_info['stat']     = ceph_mon_command(handle, 'osd stat'       , timeout)
-    osd_info['crushmap'] = ceph_mon_command(handle, 'osd getcrushmap', timeout)
-    osd_info['map']      = ceph_mon_command(handle, 'osd getmap'     , timeout)
-    osd_info['metadata'] = ceph_mon_command(handle, 'osd metadata'   , timeout)
-    osd_info['perf']     = ceph_mon_command(handle, 'osd perf'       , timeout)
+    osd_info['tree']      = ceph_mon_command(handle, 'osd tree'        , timeout)
+    osd_info['tree_json'] = ceph_shell_command('osd tree --format json', timeout)
+    osd_info['df']        = ceph_mon_command(handle, 'osd df'          , timeout)
+    osd_info['df-tree']   = ceph_shell_command('osd df tree'           , timeout)
+    osd_info['dump']      = ceph_mon_command(handle, 'osd dump'        , timeout)
+    osd_info['stat']      = ceph_mon_command(handle, 'osd stat'        , timeout)
+    osd_info['crushmap']  = ceph_mon_command(handle, 'osd getcrushmap' , timeout)
+    osd_info['map']       = ceph_mon_command(handle, 'osd getmap'      , timeout)
+    osd_info['metadata']  = ceph_mon_command(handle, 'osd metadata'    , timeout)
+    osd_info['perf']      = ceph_mon_command(handle, 'osd perf'        , timeout)
 
     if osd_info['crushmap']:
         p = subprocess.Popen(['crushtool', '-d', '-'],

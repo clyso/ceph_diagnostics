@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+#
+# Global
+#
+
+cmd_description='print cephfs session top list'
+
+parser = argparse.ArgumentParser(prog='cephfs-session-top', description=cmd_description)
+parser.add_argument(
+    '-m', '--mds',
+    metavar='name',
+    help='show for this MDS only',
+    required=False,
+)
+parser.add_argument(
+    '-F', '--fs',
+    metavar='cephfs',
+    help='show for this fs only',
+    required=False,
+    default='',
+)
+parser.add_argument(
+    '-f', '--file',
+    metavar='file',
+    help='process session list from file',
+    action='append',
+    required=False,
+)
+parser.add_argument(
+    '-N', '--top',
+    metavar='n',
+    type=int,
+    help='show firs N sessions only (default: %(default)s)',
+    required=False,
+    default=100,
+)
+parser.add_argument(
+    '-s', '--sort-by',
+    metavar='loadavg|numcaps|recallcaps|releasecaps|liveness|capacqu',
+    help='sort by specified field (default: %(default)s)',
+    default='loadavg',
+    required=False,
+)
+
+
+#
+# Functions
+#
+
+def top(mds, N, sort_by):
+    if mds.get('file'):
+        print(f'File: {os.path.basename(mds["file"])}')
+
+        if mds['file'] == '-':
+            sessions = json.load(sys.stdin)
+        else:
+            with open(mds['file'], 'r') as f:
+                sessions = json.load(f)
+    else:
+        print(f'MDS: {mds["name"]}')
+        print(f'Rank: {mds["rank"]}')
+
+        daemon = f'mds.{mds["name"]}'
+        result = subprocess.run(['ceph', 'tell', daemon, 'session', 'ls'],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True)
+        if result.returncode != 0:
+            print(
+                f'ceph tell {daemon} session ls failed: {result.stderr}',
+                file=sys.stderr
+            )
+            exit(1)
+
+        sessions = json.loads(result.stdout)
+
+    print(f'Client Sessions: {len(sessions)}')
+    print()
+
+    if not sessions:
+        return
+
+    if sort_by.lower() == 'loadavg':
+        sessions.sort(key=lambda s: s['request_load_avg'], reverse=True)
+    elif sort_by.lower() == 'numcaps':
+        sessions.sort(key=lambda s: s['num_caps'], reverse=True)
+    elif sort_by.lower() == 'reccaps':
+        sessions.sort(key=lambda s: s['recall_caps']['value'], reverse=True)
+    elif sort_by.lower() == 'relcaps':
+        sessions.sort(key=lambda s: s['release_caps']['value'], reverse=True)
+    elif sort_by.lower() == 'liveness':
+        sessions.sort(key=lambda s: s['session_cache_liveness']['value'], reverse=True)
+    elif sort_by.lower() == 'capacqu':
+        sessions.sort(key=lambda s: s['cap_acquisition']['value'], reverse=True)
+    else:
+        print(f'invalid sort_by: {sort_by}', file=sys.stderr)
+        exit(1)
+
+    if N:
+        sessions = sessions[:N]
+
+    print(f'LOADAVG NUMCAPS RECCAPS RELCAPS LIVENESS CAPACQU CLIENT')
+
+    for s in sessions:
+        print(f'{s["request_load_avg"]:7} '
+              f'{s["num_caps"]:7} '
+              f'{int(s["recall_caps"]["value"]):7} '
+              f'{int(s["release_caps"]["value"]):7} '
+              f'{int(s["session_cache_liveness"]["value"]):8} '
+              f'{int(s["cap_acquisition"]["value"]):7} '
+              f'{s["id"]} {s["client_metadata"]["hostname"]}:{s["client_metadata"]["root"]}'
+        )
+
+    print()
+
+
+def main():
+    args = parser.parse_args()
+
+    mds = []
+
+    if args.file:
+        if args.mds or args.fs:
+            print(
+                'File and --mds/--fs cannot be specified together',
+                file=sys.stderr
+            )
+            exit(1)
+
+        for f in args.file:
+            if f != '-' and not os.path.exists(f):
+                print(f'file not found: {f}', file=sys.stderr)
+                exit(1)
+            mds.append({'file': f})
+    elif args.mds and args.fs:
+        print(
+            'Either --mds or --fs can be specified, not both',
+            file=sys.stderr
+        )
+        exit(1)
+    else:
+        result = subprocess.run(
+            ['ceph', 'fs', 'status', args.fs, '--format', 'json'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if result.returncode != 0:
+            print(f'ceph fs status failed: {result.stderr}', file=sys.stderr)
+            exit(1)
+
+        fs_status = json.loads(result.stdout)
+        for m in fs_status['mdsmap']:
+            if args.mds:
+                if m['name'] == args.mds:
+                    mds.append(m)
+                    break
+                continue
+            if m['state'] == 'active':
+                mds.append(m)
+
+    if not mds:
+        print(f'no active MDS found', file=sys.stderr)
+        exit(1)
+
+    for m in mds:
+        top(m, args.top, args.sort_by)
+
+#
+# main
+#
+
+main()

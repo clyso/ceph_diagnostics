@@ -1,6 +1,7 @@
 #!/bin/sh
 
 DAEMON_NAME='*'
+LIB_DIR="$(dirname $0)/../lib"
 
 description() {
     echo "print mds admin socket command output or processed result"
@@ -23,13 +24,20 @@ help() {
     echo ""
     echo "derived commands:"
     echo ""
+    echo "  session top"
     echo "  session ls"
     echo "  session info <id>"
     echo "  session stats <id>"
     echo ""
     echo "options:"
     echo ""
-    echo " -d <daemon>  print for this daemon"
+    echo "  -d <daemon>  print for this daemon"
+    echo ""
+    echo "daemons:"
+    echo ""
+    ls fs_info-mds.*[-_]session_ls |
+	sed -Ee 's/^.*fs_info-mds\.(.*)[-_]session_ls/  \1/'
+    echo ""
 }
 
 asock_cmd() {
@@ -45,17 +53,20 @@ asock_cmd() {
 }
 
 session() {
-    local cmd=$1
+    local cmd=$1; shift
 
     case "${cmd}" in
+	top)
+            session_top "$@"
+            ;;
 	ls)
             session_ls
             ;;
 	info)
-	    session_info $2
+	    session_info $1
             ;;
 	stats)
-	    session_stats $2
+	    session_stats $1
             ;;
 	*)
 	    echo "invalid session command: '${cmd}'" >&2
@@ -64,6 +75,10 @@ session() {
             exit 1
             ;;
     esac
+}
+
+session_top() {
+	asock_cmd session_ls | "${LIB_DIR}"/cephfs-session-top -f - "$@" 2>/dev/null
 }
 
 session_ls() {
@@ -112,7 +127,7 @@ case "${cmd}" in
         description
         exit 0
         ;;
-    help)
+    help|'')
         help
         exit 0
         ;;

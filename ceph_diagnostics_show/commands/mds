@@ -31,7 +31,13 @@ help() {
     echo ""
     echo "options:"
     echo ""
-    echo " -d <daemon>  print for this daemon"
+    echo "  -d <daemon>  print for this daemon"
+    echo ""
+    echo "daemons:"
+    echo ""
+    ls fs_info-mds.*[-_]session_ls |
+	sed -Ee 's/^.*fs_info-mds\.(.*)[-_]session_ls/  \1/'
+    echo ""
 }
 
 asock_cmd() {
@@ -72,7 +78,7 @@ session() {
 }
 
 session_top() {
-	asock_cmd session_ls | "${LIB_DIR}"/cephfs-session-top -f - "$@"
+	asock_cmd session_ls | "${LIB_DIR}"/cephfs-session-top -f - "$@" 2>/dev/null
 }
 
 session_ls() {
@@ -121,7 +127,7 @@ case "${cmd}" in
         description
         exit 0
         ;;
-    help)
+    help|'')
         help
         exit 0
         ;;

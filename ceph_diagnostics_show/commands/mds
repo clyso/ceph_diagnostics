@@ -1,6 +1,7 @@
 #!/bin/sh
 
 DAEMON_NAME='*'
+LIB_DIR="$(dirname $0)/../lib"
 
 description() {
     echo "print mds admin socket command output or processed result"
@@ -23,6 +24,7 @@ help() {
     echo ""
     echo "derived commands:"
     echo ""
+    echo "  session top"
     echo "  session ls"
     echo "  session info <id>"
     echo "  session stats <id>"
@@ -45,17 +47,20 @@ asock_cmd() {
 }
 
 session() {
-    local cmd=$1
+    local cmd=$1; shift
 
     case "${cmd}" in
+	top)
+            session_top "$@"
+            ;;
 	ls)
             session_ls
             ;;
 	info)
-	    session_info $2
+	    session_info $1
             ;;
 	stats)
-	    session_stats $2
+	    session_stats $1
             ;;
 	*)
 	    echo "invalid session command: '${cmd}'" >&2
@@ -64,6 +69,10 @@ session() {
             exit 1
             ;;
     esac
+}
+
+session_top() {
+	asock_cmd session_ls | "${LIB_DIR}"/cephfs-session-top -f - "$@"
 }
 
 session_ls() {

@@ -36,7 +36,7 @@ usage()
 }
 
 cleanup() {
-    rm -Rf ${RESULTS_DIR}
+    test -n "${RESULTS_DIR}" && rm -Rf "${RESULTS_DIR}"
 }
 
 info() {
@@ -305,12 +305,42 @@ get_orch_info() {
 }
 
 archive_result() {
+    local result_archive compress
+
     info "archiving ${RESULTS_DIR} ..."
 
-    tar -czf ${RESULT_ARCHIVE} -C $(dirname ${RESULTS_DIR}) $(basename ${RESULTS_DIR})
+    if which tar > /dev/null 2>&1; then
+	result_archive=${RESULTS_DIR}.tar.gz
+
+        tar -czf ${result_archive} -C $(dirname ${RESULTS_DIR}) $(basename ${RESULTS_DIR})
+
+    elif which cpio > /dev/null 2>&1; then
+	result_archive=${RESULTS_DIR}.cpio
+
+	if which gzip > /dev/null 2>&1; then
+	    compress="gzip -c"
+	    result_archive=${result_archive}.gz
+	elif which bzip2 > /dev/null 2>&1; then
+	    compress="bzip2 -c"
+	    result_archive=${result_archive}.bz2
+	else
+	    compress="cat"
+	fi
+
+        (
+           cd $(dirname ${RESULTS_DIR}) &&
+           find $(basename ${RESULTS_DIR}) -print | cpio -o -H newc
+	) | ${compress} > ${result_archive}
+    else
+	info "no archiving tool found, keeping results in directory"
+	result_archive=${RESULTS_DIR}
+
+	# Reset RESULTS_DIR to prevent removal on cleanup
+	RESULTS_DIR=
+    fi
 
     info "done"
-    info "result: ${RESULT_ARCHIVE}"
+    info "result: ${result_archive}"
 }
 
 #
@@ -399,7 +429,6 @@ if [ -n "${RESULTS_DIR}" ]; then
 else
     RESULTS_DIR=$(mktemp -d /tmp/ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX)
 fi
-RESULT_ARCHIVE=${RESULTS_DIR}.tar.gz
 
 trap cleanup INT TERM EXIT
 

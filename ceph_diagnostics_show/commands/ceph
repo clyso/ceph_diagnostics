@@ -45,6 +45,7 @@ help() {
     echo "  pg dump_stuck"
     echo "  report"
     echo "  status"
+    echo "  tell"
     echo "  version"
     echo "  versions"
 }
@@ -61,6 +62,111 @@ osd_metadata_filter() {
     else
 	jq ".[]"
     fi
+}
+
+ tell() {
+    local daemon="$1"
+
+    if [ -z "$daemon" ]; then
+	echo "known daemons:"
+        echo ""
+        ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
+        sed -nEe '
+	  s/^monitor_info-(mon\..*)-config_diff$/  \1/p;
+	  s/^manager_info-(mgr\..*)-config_diff$/  \1/p;
+	  s/^fs_info-(mds\..*)-config_diff$/  \1/p;
+	  s/^osd_info-(osd\..*)-config_diff$/  \1/p;
+        '
+        echo ""
+        exit 0
+    fi
+
+    shift
+    cmd="$@"
+
+    if [ -z "$cmd" ]; then
+        echo "supported commands:"
+        echo ""
+        case "$daemon" in
+            mon*)
+                ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
+                sed -nEe 's/^monitor_info-mon\..*-([^-.]*)$/  \1/p' |
+                sort -u
+                ;;
+            mgr*)
+                ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
+                sed -nEe 's/^manager_info-mgr\..*-([^-.]*)$/  \1/p' |
+                sort -u
+                ;;
+            mds*)
+                ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
+                sed -nEe 's/^fs_info-mds\..*-([^-.]*)$/  \1/p' |
+                sort -u
+                ;;
+            osd*)
+                ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
+                sed -nEe 's/^osd_info-osd\..*-([^-.]*)$/  \1/p' |
+                sort -u
+                ;;
+            *)
+                echo "unknown daemon: $daemon" >&2
+                exit 1
+                ;;
+        esac
+        echo ""
+        exit 0
+    fi
+
+    case "$daemon" in
+        mon|"mon.*")
+            ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
+            sed -nEe 's/^monitor_info-(mon\..*)-'"$cmd"'$/\1/p' |
+            while read daemon; do
+                echo "$daemon:"
+                cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-${daemon}-${cmd}"
+            done
+            ;;
+        mon.*)
+            cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-${daemon}-${cmd}"
+            ;;
+        mgr|"mgr.*")
+            ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
+            sed -nEe 's/^manager_info-(mgr\..*)-'"$cmd"'$/\1/p' |
+            while read daemon; do
+                echo "$daemon:"
+                cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-${daemon}-${cmd}"
+            done
+            ;;
+        mgr.*)
+            cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-${daemon}-${cmd}"
+            ;;
+        mds|"mds.*")
+            ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
+            sed -nEe 's/^fs_info-(mds\..*)-'"$cmd"'$/\1/p' |
+            while read daemon; do
+                echo "$daemon:"
+                cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-${daemon}-${cmd}"
+            done
+            ;;
+        mds.*)
+            cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-${daemon}-${cmd}"
+            ;;
+        osd|"osd.*")
+            ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
+            sed -nEe 's/^osd_info-(osd\..*)-'"$cmd"'$/\1/p' |
+            while read daemon; do
+                echo "$daemon:"
+                cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-${daemon}-${cmd}"
+            done
+            ;;
+        osd.*)
+            cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-${daemon}-${cmd}"
+            ;;
+        *)
+            echo "unknown daemon: $daemon" >&2
+            exit 1
+            ;;
+    esac
 }
 
 cmd="$@"
@@ -205,6 +311,10 @@ case "$cmd" in
     "pg dump_stuck")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_stuck"
         ;;
+    tell*)
+	tell ${cmd#tell}
+	exit 0
+	;;
     *)
 	echo "invalid or unsupported ceph command: $cmd" >&2
         exit 1

@@ -35,7 +35,7 @@ help() {
     echo ""
     echo "daemons:"
     echo ""
-    ls fs_info-mds.*[-_]session_ls |
+    ls fs_info-mds.*[-_]session_ls 2> /dev/null |
 	sed -Ee 's/^.*fs_info-mds\.(.*)[-_]session_ls/  \1/'
     echo ""
 }

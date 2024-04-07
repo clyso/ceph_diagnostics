@@ -11,6 +11,7 @@ CEPH_TIMEOUT="${CEPH_TIMEOUT:-10}"
 QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
 VERBOSE="${VERBOSE:-N}"
+COLLECT_OSD_ASOK_STATS="${COLLECT_OSD_ASOK_STATS:-N}"
 
 #
 # Functions
@@ -30,6 +31,7 @@ usage()
     echo "  -t | --timeout <seconds>        timeout for ceph operations"
     echo "  -u | --uncensored               don't hide sensitive data"
     echo "  -v | --verbose                  be verbose"
+    echo "  -o | --osd-asok-stats           collect osd stats via admin socket (tell)"
     echo
 }
 
@@ -124,6 +126,20 @@ get_monitor_info() {
     store ${t}-dump     ${CEPH} mon dump
     store ${t}-map      ${CEPH} mon getmap
     store ${t}-metadata ${CEPH} mon metadata
+
+    show_stored ${t}-dump |
+    sed -nEe 's/^.* (mon\..*)$/\1/p' |
+    while read mon; do
+        store ${t}-${mon}-config_diff            ${CEPH} tell ${mon} config diff
+        store ${t}-${mon}-config_show            ${CEPH} tell ${mon} config show
+        store ${t}-${mon}-dump_historic_ops      ${CEPH} tell ${mon} dump_historic_ops
+        store ${t}-${mon}-dump_historic_slow_ops ${CEPH} tell ${mon} dump_historic_slow_ops
+        store ${t}-${mon}-dump_mempools          ${CEPH} tell ${mon} dump_mempools
+        store ${t}-${mon}-mon_status             ${CEPH} tell ${mon} mon_status
+        store ${t}-${mon}-ops                    ${CEPH} tell ${mon} ops
+        store ${t}-${mon}-perf_dump              ${CEPH} tell ${mon} perf dump
+        store ${t}-${mon}-sessions               ${CEPH} tell ${mon} sessions
+    done
 }
 
 get_device_info() {
@@ -142,6 +158,19 @@ get_manager_info() {
     store ${t}-ls-modules ${CEPH} mgr module ls
     store ${t}-dump       ${CEPH} mgr dump
     store ${t}-metadata   ${CEPH} mgr metadata
+
+    show_stored ${t}-dump |
+    sed -nEe 's/^.*"active_name": "([^"]*)".*$/mgr.\1/p' |
+    while read mgr; do
+        store ${t}-${mgr}-mds_requests  ${CEPH} tell ${mgr} mds_requests
+        store ${t}-${mgr}-config_diff   ${CEPH} tell ${mgr} config diff
+        store ${t}-${mgr}-config_show   ${CEPH} tell ${mgr} config show
+        store ${t}-${mgr}-dump_cache    ${CEPH} tell ${mgr} dump_cache
+        store ${t}-${mgr}-dump_mempools ${CEPH} tell ${mgr} dump_mempools
+        store ${t}-${mgr}-mgr_status    ${CEPH} tell ${mgr} mgr_status
+        store ${t}-${mgr}-perf_dump     ${CEPH} tell ${mgr} perf dump
+        store ${t}-${mgr}-status        ${CEPH} tell ${mgr} status
+    done
 }
 
 get_osd_info() {
@@ -161,6 +190,25 @@ get_osd_info() {
     store ${t}-perf      ${CEPH} osd perf
 
     show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
+
+    if [ "${COLLECT_OSD_ASOK_STATS}" = Y ]; then
+	show_stored ${t}-dump |
+        sed -nEe 's/^(osd\.[0-9*]) .*$/\1/p' |
+        while read osd; do
+            store ${t}-${osd}-cache_status            ${CEPH} tell ${osd} cache status
+            store ${t}-${osd}-config_diff             ${CEPH} tell ${osd} config diff
+            store ${t}-${osd}-config_show             ${CEPH} tell ${osd} config show
+            store ${t}-${osd}-dump_historic_ops       ${CEPH} tell ${osd} dump_historic_ops
+            store ${t}-${osd}-dump_historic_slow_ops  ${CEPH} tell ${osd} dump_historic_slow_ops
+            store ${t}-${osd}-dump_mempools           ${CEPH} tell ${osd} dump_mempools
+            store ${t}-${osd}-dump_ops_in_flight      ${CEPH} tell ${osd} dump_ops_in_flight
+            store ${t}-${osd}-dump_osd_network        ${CEPH} tell ${osd} dump_osd_network
+            store ${t}-${osd}-dump_scrub_reservations ${CEPH} tell ${osd} dump_scrub_reservations
+            store ${t}-${osd}-dump_scrubs             ${CEPH} tell ${osd} dump_scrubs
+            store ${t}-${osd}-perf_dump               ${CEPH} tell ${osd} perf dump
+            store ${t}-${osd}-status                  ${CEPH} tell ${osd} status
+        done
+    fi
 }
 
 get_pg_info() {
@@ -205,15 +253,19 @@ get_fs_info() {
     show_stored ${t}-dump |
     sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p' |
     while read mds; do
-	store ${t}-${mds}-status             ${CEPH} tell ${mds} status
-	store ${t}-${mds}-dump_historic_ops  ${CEPH} tell ${mds} dump_historic_ops
-	store ${t}-${mds}-dump_ops_in_flight ${CEPH} tell ${mds} dump_ops_in_flight
-	store ${t}-${mds}-cache_status       ${CEPH} tell ${mds} cache status
-	store ${t}-${mds}-perf_dump          ${CEPH} tell ${mds} perf dump
-	store ${t}-${mds}-scrub_status       ${CEPH} tell ${mds} scrub status
-	store ${t}-${mds}-dump_loads         ${CEPH} tell ${mds} dump loads
-	store ${t}-${mds}-session_ls         ${CEPH} tell ${mds} session ls
-	store ${t}-${mds}-dump_mempools      ${CEPH} tell ${mds} dump_mempools
+        store ${t}-${mds}-cache_status       ${CEPH} tell ${mds} cache status
+        store ${t}-${mds}-dump_historic_ops  ${CEPH} tell ${mds} dump_historic_ops
+        store ${t}-${mds}-dump_loads         ${CEPH} tell ${mds} dump loads
+        store ${t}-${mds}-dump_mempools      ${CEPH} tell ${mds} dump_mempools
+        store ${t}-${mds}-dump_ops_in_flight ${CEPH} tell ${mds} dump_ops_in_flight
+        store ${t}-${mds}-perf_dump          ${CEPH} tell ${mds} perf dump
+        store ${t}-${mds}-scrub_status       ${CEPH} tell ${mds} scrub status
+        store ${t}-${mds}-session_ls         ${CEPH} tell ${mds} session ls
+        store ${t}-${mds}-status             ${CEPH} tell ${mds} status
+        store ${t}-${mds}-config_diff        ${CEPH} tell ${mds} config diff
+        store ${t}-${mds}-config_show        ${CEPH} tell ${mds} config show
+        store ${t}-${mds}-damage_ls          ${CEPH} tell ${mds} damage ls
+        store ${t}-${mds}-dump_blocked_ops   ${CEPH} tell ${mds} dump_blocked_ops
     done
 }
 
@@ -265,9 +317,9 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o hc:qr:t:uv --long help,ceph-config-file:,query-inactive-pg,results-dir:,timeout:,uncensored,verbose -- "$@")
+OPTIONS=$(getopt -o hc:oqr:t:uv --long help,ceph-config-file:,osd-asok-stats,query-inactive-pg,results-dir:,timeout:,uncensored,verbose -- "$@")
 if [ $? -ne 0 ]; then
-    usage >&2    
+    usage >&2
     exit 1
 fi
 
@@ -281,6 +333,10 @@ while true; do
 	-c|--ceph-config-file)
 	    CEPH_CONFIG_FILE="$2"
 	    shift 2
+	    ;;
+	-o|--osd-asok-stats)
+	    COLLECT_OSD_ASOK_STATS=Y
+	    shift
 	    ;;
 	-q|--query-inactive-pg)
 	    QUERY_INACTIVE_PG=Y

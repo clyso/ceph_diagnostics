@@ -13,6 +13,7 @@ help() {
     echo "  balancer status"
     echo "  config dump"
     echo "  config log"
+    echo "  crash info <id>"
     echo "  crash ls"
     echo "  device ls"
     echo "  df detail"
@@ -37,7 +38,7 @@ help() {
     echo "  osd dump"
     echo "  osd getcrushmap"
     echo "  osd getmap"
-    echo "  osd metadata [id]"
+    echo "  osd metadata [<id>]"
     echo "  osd perf"
     echo "  osd pool ls detail"
     echo "  osd tree"
@@ -205,6 +206,14 @@ case "$cmd" in
         ;;
     "versions")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-versions"
+        ;;
+    "crash info"*)
+	id=$(echo $cmd | sed -Ee 's/crash info //; s/:/_/g;')
+	if [ -z "$id" ]; then
+	    echo "crash info expects <crash_id> argument" >&2
+	    exit 1
+	fi
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-crash_info_${id}"
         ;;
     "crash ls")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-crash_ls"

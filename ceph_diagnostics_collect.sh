@@ -11,7 +11,7 @@ CEPH_TIMEOUT="${CEPH_TIMEOUT:-10}"
 QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
 VERBOSE="${VERBOSE:-N}"
-COLLECT_OSD_ASOK_STATS="${COLLECT_OSD_ASOK_STATS:-N}"
+COLLECT_ALL_OSD_ASOK_STATS="${COLLECT_ALL_OSD_ASOK_STATS:-N}"
 
 #
 # Functions
@@ -31,7 +31,7 @@ usage()
     echo "  -t | --timeout <seconds>        timeout for ceph operations"
     echo "  -u | --uncensored               don't hide sensitive data"
     echo "  -v | --verbose                  be verbose"
-    echo "  -o | --osd-asok-stats           collect osd stats via admin socket (tell)"
+    echo "  -a | --all-osd-asok-stats       get data via admin socket (tell) for all osds"
     echo
 }
 
@@ -191,24 +191,37 @@ get_osd_info() {
 
     show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
 
-    if [ "${COLLECT_OSD_ASOK_STATS}" = Y ]; then
-	show_stored ${t}-dump |
-        sed -nEe 's/^(osd\.[0-9*]) .*$/\1/p' |
-        while read osd; do
-            store ${t}-${osd}-cache_status            ${CEPH} tell ${osd} cache status
-            store ${t}-${osd}-config_diff             ${CEPH} tell ${osd} config diff
-            store ${t}-${osd}-config_show             ${CEPH} tell ${osd} config show
-            store ${t}-${osd}-dump_historic_ops       ${CEPH} tell ${osd} dump_historic_ops
-            store ${t}-${osd}-dump_historic_slow_ops  ${CEPH} tell ${osd} dump_historic_slow_ops
-            store ${t}-${osd}-dump_mempools           ${CEPH} tell ${osd} dump_mempools
-            store ${t}-${osd}-dump_ops_in_flight      ${CEPH} tell ${osd} dump_ops_in_flight
-            store ${t}-${osd}-dump_osd_network        ${CEPH} tell ${osd} dump_osd_network
-            store ${t}-${osd}-dump_scrub_reservations ${CEPH} tell ${osd} dump_scrub_reservations
-            store ${t}-${osd}-dump_scrubs             ${CEPH} tell ${osd} dump_scrubs
-            store ${t}-${osd}-perf_dump               ${CEPH} tell ${osd} perf dump
-            store ${t}-${osd}-status                  ${CEPH} tell ${osd} status
-        done
-    fi
+    # Sort osds by weight and collect stats for one of every class
+    # with highest weight, unless COLLECT_ALL_OSD_ASOK_STATS is set,
+    # in which case stats for all osds are collected.
+    # The sort and awk commands below parse lines like this:
+    #
+    #   99    ssd     0.21799          osd.99               up   1.00000  1.00000
+    #
+    show_stored ${t}-tree | sort -n -k 3 |
+    awk -v a=$(test "${COLLECT_ALL_OSD_ASOK_STATS}" = Y && echo 1) '
+        $5 == "up" && $6 > 0.8 {
+            if (a) {print $4} else {o[$2] = $4}
+        }
+        END {
+            if (!a) {
+                for (c in o) print o[c]
+             }
+        }' |
+    while read osd; do
+        store ${t}-${osd}-cache_status            ${CEPH} tell ${osd} cache status
+        store ${t}-${osd}-config_diff             ${CEPH} tell ${osd} config diff
+        store ${t}-${osd}-config_show             ${CEPH} tell ${osd} config show
+        store ${t}-${osd}-dump_historic_ops       ${CEPH} tell ${osd} dump_historic_ops
+        store ${t}-${osd}-dump_historic_slow_ops  ${CEPH} tell ${osd} dump_historic_slow_ops
+        store ${t}-${osd}-dump_mempools           ${CEPH} tell ${osd} dump_mempools
+        store ${t}-${osd}-dump_ops_in_flight      ${CEPH} tell ${osd} dump_ops_in_flight
+        store ${t}-${osd}-dump_osd_network        ${CEPH} tell ${osd} dump_osd_network
+        store ${t}-${osd}-dump_scrub_reservations ${CEPH} tell ${osd} dump_scrub_reservations
+        store ${t}-${osd}-dump_scrubs             ${CEPH} tell ${osd} dump_scrubs
+        store ${t}-${osd}-perf_dump               ${CEPH} tell ${osd} perf dump
+        store ${t}-${osd}-status                  ${CEPH} tell ${osd} status
+    done
 }
 
 get_pg_info() {
@@ -347,7 +360,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o hc:oqr:t:uv --long help,ceph-config-file:,osd-asok-stats,query-inactive-pg,results-dir:,timeout:,uncensored,verbose -- "$@")
+OPTIONS=$(getopt -o ac:hqr:t:uv --long all-osd-asok-stats,ceph-config-file:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -364,8 +377,8 @@ while true; do
 	    CEPH_CONFIG_FILE="$2"
 	    shift 2
 	    ;;
-	-o|--osd-asok-stats)
-	    COLLECT_OSD_ASOK_STATS=Y
+	-a|--all-osd-asok-stats)
+	    COLLECT_ALL_OSD_ASOK_STATS=Y
 	    shift
 	    ;;
 	-q|--query-inactive-pg)

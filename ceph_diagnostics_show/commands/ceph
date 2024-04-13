@@ -32,6 +32,8 @@ help() {
     echo "  mon getmap"
     echo "  mon metadata"
     echo "  mon stat"
+    echo "  orch ls [--format yaml]"
+    echo "  orch ps"
     echo "  orch status"
     echo "  osd df tree"
     echo "  osd df"
@@ -274,6 +276,15 @@ case "$cmd" in
         ;;
     "mon stat")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-stat"
+        ;;
+    "orch ls")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-ls"
+        ;;
+    "orch ls --format yaml")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-ls_yaml"
+        ;;
+    "orch ps")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-ps"
         ;;
     "orch status")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-status"

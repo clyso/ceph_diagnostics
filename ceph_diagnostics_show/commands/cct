@@ -1,0 +1,40 @@
+#!/bin/sh
+
+CLYSO_CCT_DIR="${CLYSO_CCT_DIR:-${HOME}/clyso/cct}"
+
+description() {
+    echo "run cct command"
+}
+
+help() {
+    description
+    echo ""
+}
+
+cct() {
+    if [ ! -d "${CLYSO_CCT_DIR}/venv" ]; then
+	echo "cct is not installed or CLYSO_CCT_DIR is not set correctly" >&2
+	exit 1
+    fi
+
+    cd "${CLYSO_CCT_DIR}"
+    source venv/bin/activate
+    cd src
+    python3 ./cct.py --data="${CEPH_DIAGNOSTICS_COLLECT_DIR}" "$@"
+}
+
+cmd="$@"
+
+case "$cmd" in
+    description)
+        description
+        exit 0
+        ;;
+    help)
+        help
+        exit 0
+        ;;
+    *)
+	cct "$@"
+        ;;
+esac

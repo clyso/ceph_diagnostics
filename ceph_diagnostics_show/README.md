@@ -20,13 +20,21 @@ usage: cds <command> [options] [args]
 
 Commands:
 
-  ceph        print ceph command output
-  crush          show ceph crush info
-  find-by-addr   find daemon by <ip:port> address
-  historic_ops   print ceph daemon historic ops
-  osd            show ceph osd info
-  pg             process pg dump
-  pool           show pool info
+  cct                     run cct command
+  ceph                    print ceph command output
+  check-pg-on-same-host   check 2 or more pg replica/shards on the same host
+  copilot                 run copilot command
+  crush                   show ceph crush info
+  find-by-addr            find daemon by <ip:port> address
+  fsa                     run fsa command
+  historic_ops            print ceph daemon historic ops
+  mds                     print mds admin socket command output or processed result
+  osd                     show ceph osd info
+  perf                    print ceph daemon perf
+  pg                      process pg dump
+  pool                    show pool info
+  radosgw-admin           print radosgw-admin command output
+  report                  generate diagnostic report
 
 $ cds ceph help
 print ceph command output
@@ -34,7 +42,10 @@ print ceph command output
 supported commands:
 
   auth list
+  balancer status
   config dump
+  config log
+  crash info <id>
   crash ls
   device ls
   df detail
@@ -45,8 +56,7 @@ supported commands:
   fsid
   health detail
   health
-  mds dump
-  mds getmap
+  mds metadata
   mds stat
   mgr dump
   mgr metadata
@@ -54,19 +64,23 @@ supported commands:
   mon getmap
   mon metadata
   mon stat
+  orch ls [--format yaml]
+  orch ps
   orch status
   osd df tree
   osd df
   osd dump
   osd getcrushmap
   osd getmap
-  osd metadata
+  osd metadata [<id>]
   osd perf
+  osd pool ls detail
   osd tree
   pg dump [--format json]
   pg dump_stuck
   report
   status
+  tell
   version
   versions
 
@@ -99,12 +113,13 @@ $ cds ceph status
     client:   9.0 MiB/s wr, 0 op/s rd, 4 op/s wr
 ``` 
 
-## Integrating ceph-copilot and clyso-fsa
+## Integrating ceph-copilot, clyso-fsa and cct
 
-`ceph-copilot` and `clyso-fsa` are @clyso internal Ceph analyzing tools.
-If you have access to them you may easily integrate them with `cds`. Just
-make sure the `copilot` and `fsa` commands are in the `PATH` and running.
-For example:
+`ceph-copilot`, `clyso-fsa` and `cct` are @clyso internal Ceph analyzing tools.
+If you have access to them you may easily integrate them with `cds`.
+
+For `ceph-copilot` and `clyso-fsa` integration, just make sure the `copilot`
+and `fsa` commands are in the `PATH` and running.  For example:
 
 ```
 $ cd ~/clyso/ceph-copilot
@@ -118,16 +133,25 @@ Alternatively you may set `CEPH_COPILOT` and `CLYSO_FSA` environment variables,
 like below:
 
 ```
-CEPH_COPILOT="PYTHONPATH=$HOME/clyso/ceph-copilot/src:$PYTHONPATH python3 $HOME/clyso/ceph-copilot/copilot/copilot"
-CLYSO_FSA="PYTHONPATH=$HOME/clyso/ceph-copilot/src:$PYTHONPATH python3 $HOME/clyso/clyso-fsa/src/fsa"
+export CEPH_COPILOT="PYTHONPATH=$HOME/clyso/ceph-copilot/src:$PYTHONPATH python3 $HOME/clyso/ceph-copilot/copilot/copilot"
+export CLYSO_FSA="PYTHONPATH=$HOME/clyso/ceph-copilot/src:$PYTHONPATH python3 $HOME/clyso/clyso-fsa/src/fsa"
 ```
 
-After this the commands below should work:
+For `cct` integration, when you have it already configured, as described in its
+documentation, specify `cct` source directory in `CLYSO_CCT_DIR` environment
+variable, e.g:
+
+```
+export CLYSO_CCT_DIR="${HOME}/clyso/cct"
+```
+
+After setup the commands below should work:
 
 ```
 $ cds copilot checkup
 $ cds copilot checkup --verbose
 $ cds fsa full
+$ cds cct crush browse
 ```
 
 ## Adding a new command

@@ -12,14 +12,21 @@ help() {
     echo "supported commands:"
     echo ""
     echo "  checkup [-v|--verbose]"
+    echo "  pg distribution [options]"
     echo ""
 }
 
 checkup() {
-    local report_file="$1"
-    local verbose="$2"
+    eval ${CEPH_COPILOT} cluster checkup \
+         --ceph_report_json="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-report" \
+         "$@"
+}
 
-    eval ${CEPH_COPILOT} checkup --ceph_report_json="${report_file}" ${verbose}
+pg_distribution() {
+    eval ${CEPH_COPILOT} pools pg distribution \
+         --osd_tree_json="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-tree_json" \
+         --pg_dump_json="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json" \
+         "$@"
 }
 
 cmd="$@"
@@ -33,12 +40,15 @@ case "$cmd" in
         help
         exit 0
         ;;
-    "checkup")
-	checkup "${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-report"
+    "-v"|"--verbose"|"checkup -v"|"checkup --verbose")
+	checkup --verbose
         ;;
-    "checkup -v"|"checkup --verbose")
-	checkup "${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-report" --verbose
+    ""|"checkup"*)
+	checkup ${cmd#checkup}
         ;;
+    "pg distribution"*)
+	pg_distribution ${cmd#pg distribution}
+	;;
     *)
 	echo "invalid or unsupported copilot command: $cmd" >&2
         exit 1

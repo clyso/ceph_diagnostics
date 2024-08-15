@@ -148,6 +148,7 @@ get_device_info() {
     info "collecting device info ..."
 
     store ${t}-ls ${CEPH} device ls
+    store ${t}-ls_json ${CEPH} device ls --format json
 }
 
 get_manager_info() {

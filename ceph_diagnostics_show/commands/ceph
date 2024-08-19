@@ -15,7 +15,7 @@ help() {
     echo "  config log"
     echo "  crash info <id>"
     echo "  crash ls"
-    echo "  device ls"
+    echo "  device ls [--format json]"
     echo "  df detail"
     echo "  df"
     echo "  fs dump"
@@ -238,6 +238,9 @@ case "$cmd" in
     "device ls")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/device_info-ls"
         ;;
+    "device ls --format json")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/device_info-ls_json"
+        ;;
     "fs dump")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-dump"
         ;;
@@ -325,7 +328,6 @@ case "$cmd" in
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
         ;;
     "pg dump --format json")
-	# TODO: --format json
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json"
         ;;
     "pg dump_stuck")

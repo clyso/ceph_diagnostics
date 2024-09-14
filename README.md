@@ -16,6 +16,7 @@ in /tmp folder.
 ## How to execute ?
 
 Normally it is just enough to download and execute the script:
+
 ```
 ./ceph_diagnostics_collect.sh
 ```
@@ -23,8 +24,16 @@ Normally it is just enough to download and execute the script:
 There are options that one might want to set to collect more info or
 specify ceph config location. To get information about all options
 available run:
+
 ```
 ./ceph_diagnostics_collect.sh -h
+```
+
+The node_collect script collects information for Ceph daemons running on the current host, so it is useful to gather logs and performance metrics of the daemons.
+Run ceph_diagnostics_node_collect.sh on one MON, one MGR, at least one OSD, one MDS, and one RGW host.
+
+```
+./ceph_diagnostics_node_collect.sh
 ```
 
 ## How to analyse ?

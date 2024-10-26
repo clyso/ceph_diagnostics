@@ -12,6 +12,7 @@ help() {
     echo "  ls-by-primary <id|osd.id>  - list pg with primary = [osd]"
     echo "  info <pgid>                - show pg info"
     echo "  stats <pgid>               - show pg stats in json format"
+    echo "  scrub-stats                - show scrub stats"
 }
 
 get_osd_id() {
@@ -98,12 +99,13 @@ scrub_stats() {
       sum_pool[pool] += $2
     }
     END {
-	  print "total number of pgs: " n
-	  print "total scrub duration: " sum " sec"
-	  print "average scrub duration: " sum / n " sec"
+	  printf("total number of pgs: %d\n", n)
+	  printf("total scrub duration: %.2f sec\n", sum)
+	  printf("average scrub duration: %.2f sec\n", sum / n)
 	  print "per pool scrub duration:"
 	  for (p in num) {
-		print "  " p ": " sum_pool[p] " sec (" num[p] " pgs, " sum_pool[p] / num[p] " sec/pg)"
+		printf("  %s: %.2f sec (%d pgs, %.2f sec/pg)\n",
+                       p, sum_pool[p], num[p], sum_pool[p] / num[p])
 	  }
 	}
     '

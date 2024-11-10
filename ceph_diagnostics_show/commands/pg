@@ -1,135 +1,202 @@
-#!/bin/sh
+#!/usr/bin/env python3
 
-description() {
-    echo "process pg dump"
-}
+import argparse
+import json
+import os
+import sys
 
-help() {
-    description
-    echo
-    echo "Commands: "
-    echo "  ls-by-osd <id|osd.id>      - list pg on osd [osd]"
-    echo "  ls-by-primary <id|osd.id>  - list pg with primary = [osd]"
-    echo "  info <pgid>                - show pg info"
-    echo "  stats <pgid>               - show pg stats in json format"
-    echo "  scrub-stats                - show scrub stats"
-}
 
-get_osd_id() {
-    id=$(echo $1 | sed -s 's/osd\.//')
-    case "${id}" in
-        [0-9]*)
-            echo ${id}
-            ;;
-        *)
-            echo "invalid osd id: '$id'" >&2
-            exit 1
-            ;;
-    esac
-}
+#
+# Global
+#
 
-ls_by_osd() {
-    local id
-    local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
-    local base=16
+CEPH_DIAGNOSTICS_COLLECT_DIR = os.environ.get('CEPH_DIAGNOSTICS_COLLECT_DIR')
 
-    id=$(get_osd_id $1) || exit 1
+description="process pg dump"
+epilog="""
+Commands:
+  ls-by-osd <id|osd.id>      - list pg on osd [osd]
+  ls-by-primary <id|osd.id>  - list pg with primary = [osd]
+  info <pgid>                - show pg info
+  stats <pgid>               - show pg stats
+  scrub-stats                - show scrub stats
+  check-pg-on-same-host      - check if pgs are on the same host"""
 
-    grep -q LOG_DUPS "${pgdump}" && base=$((base+1))
+parser = argparse.ArgumentParser(prog='cds osd',
+                                 description=description,
+                                 epilog=epilog,
+                                 formatter_class=argparse.RawTextHelpFormatter)
+parser.add_argument(
+    'command',
+    metavar='ls-by-osd|ls-by-primary|info|stats|scrub-stats|check-pg-on-same-host',
+    help='command',
+    nargs=1,
+    default=None,
+)
+parser.add_argument(
+    'id',
+    metavar='id',
+    help='osd or pg id',
+    nargs='*',
+    default=None,
+)
 
-    awk '
-      $1 == "PG_STAT" || $1 ~ /^[0-9]+\./ && ($'${base}' ~ /[,\[]'${id}'[,\]]/ || $'$((base+2))' ~ /[,\[]'${id}'[,\]]/)
-    ' "${pgdump}"
-}
+#
+# Functions
+#
 
-ls_by_primary() {
-    local id
-    local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
-    local base=17
+def description():
+    print(cmd_description)
 
-    id=$(get_osd_id $1) || exit 1
+def help():
+    parser.print_help()
 
-    grep -q LOG_DUPS "${pgdump}" && base=$((base+1))
+def get_osd_id(name):
+    if name.startswith('osd.'):
+        name = name[4:]
+    return int(name)
 
-    awk '
-      $1 == "PG_STAT" || $1 ~ /^[0-9]+\./ && ('${base}' == '${id}' || $'$((base+2))' == '${id}')
-    ' "${pgdump}"
-}
+def get_pg_dump():
+    with open(CEPH_DIAGNOSTICS_COLLECT_DIR + "/pg_info-dump_json", "r") as f:
+        return json.load(f)
 
-info() {
-    local pgid=$1
+def get_osd_metadata():
+    with open(os.path.join(CEPH_DIAGNOSTICS_COLLECT_DIR,
+                           "osd_info-metadata"), "r") as f:
+        return json.load(f)
 
-    stats ${pgid} | jq -r '. |
-      ["pgid:      ", .pgid],
-      ["state:     ", .state],
-      ["up:        ", .up[]],
-      ["acting:    ", .acting[]],
-      ["objects:   ", .stat_sum.num_objects],
-      ["bytes:     ", .stat_sum.num_bytes],
-      ["omap_keys: ", .stat_sum.num_omap_keys],
-      ["omap_bytes:", .stat_sum.num_omap_bytes],
-      ["unfound:   ", .stat_sum.num_objects_unfound],
-      ["snaptrimq: ", .snaptrimq_len],
-      ["scrub:     ", .last_scrub_stamp],
-      ["deep-scrub:", (.last_deep_scrub_stamp, "(" + (.last_scrub_duration | tostring) + " sec)")]
-        | @tsv'
-}
+def ls_by_osd(osd_ids):
+    pg_dump = get_pg_dump()
+    for osd_id in osd_ids:
+        osd_id = get_osd_id(osd_id)
+        pgs = [pg['pgid'] for pg in pg_dump['pg_map']['pg_stats'] \
+               if osd_id in pg['acting'] or osd_id in pg['up']]
+        with open(CEPH_DIAGNOSTICS_COLLECT_DIR + "/pg_info-dump", "r") as f:
+            for line in f.readlines():
+                cols = line.strip().split()
+                if cols and cols[0] in pgs:
+                    print(line.strip())
 
-stats() {
-    local pgid=$1
-    local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json"
+def ls_by_primary(osd_ids):
+    pg_dump = get_pg_dump()
+    for osd_id in osd_ids:
+        osd_id = get_osd_id(osd_id)
+        pgs = [pg['pgid'] for pg in pg_dump['pg_map']['pg_stats'] \
+               if osd_id == pg['acting_primary'] or osd_id == pg['up_primary']]
+        with open(CEPH_DIAGNOSTICS_COLLECT_DIR + "/pg_info-dump", "r") as f:
+            for line in f.readlines():
+                cols = line.strip().split()
+                if cols and cols[0] in pgs:
+                    print(line.strip())
 
-    jq ".pg_map.pg_stats[] | select(.pgid==\"${pgid}\")" < "${pgdump}"
-}
+def info(pgids):
+    pg_dump = get_pg_dump()
+    for pg in pg_dump['pg_map']['pg_stats']:
+        if pg['pgid'] in pgids:
+            print("pgid:      ", pg['pgid'])
+            print("state:     ", pg['state'])
+            print("up:        ", pg['up'])
+            print("acting:    ", pg['acting'])
+            print("objects:   ", pg['stat_sum']['num_objects'])
+            print("bytes:     ", pg['stat_sum']['num_bytes'])
+            print("omap_keys: ", pg['stat_sum']['num_omap_keys'])
+            print("omap_bytes:", pg['stat_sum']['num_omap_bytes'])
+            print("unfound:   ", pg['stat_sum']['num_objects_unfound'])
+            print("snaptrimq: ", pg['snaptrimq_len'])
+            print("scrub:     ", pg['last_scrub_stamp'])
+            print("deep-scrub:", pg['last_deep_scrub_stamp'],
+                  "(", pg['last_scrub_duration'], "sec)")
 
-scrub_stats() {
-    local pgdump="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json"
+def stats(pgids):
+    pg_dump = get_pg_dump()
+    for pg in pg_dump['pg_map']['pg_stats']:
+        if pg['pgid'] in pgids:
+            print(json.dumps(pg, indent=2))
 
-    if ! grep -q scrub_duration "${pgdump}"; then
-	echo "no scrub stats in pg dump" >&2
-	exit 1
-    fi
+def scrub_stats():
+    pg_dump = get_pg_dump()
+    scrub_duration_sum = 0
+    num_objects_sum = 0
+    num_bytes_sum = 0
+    scrub_duration_sum_pool = {}
+    num_objects_sum_pool = {}
+    num_bytes_sum_pool = {}
+    num = {}
+    for pg in pg_dump['pg_map']['pg_stats']:
+        if 'scrub_duration' in pg:
+            scrub_duration_sum += pg['scrub_duration']
+            num_objects_sum += pg['stat_sum']['num_objects']
+            num_bytes_sum += pg['stat_sum']['num_bytes']
+            pool = pg['pgid'].split('.')[0]
+            num[pool] = num.get(pool, 0) + 1
+            scrub_duration_sum_pool[pool] = scrub_duration_sum_pool.get(pool, 0) + pg['scrub_duration']
+            num_objects_sum_pool[pool] = num_objects_sum_pool.get(pool, 0) + pg['stat_sum']['num_objects']
+            num_bytes_sum_pool[pool] = num_bytes_sum_pool.get(pool, 0) + pg['stat_sum']['num_bytes']
+    print("total number of pgs: %d" % len(pg_dump['pg_map']['pg_stats']))
+    print("total scrub duration: %d sec" % scrub_duration_sum)
+    print("average scrub duration: %d sec" % (scrub_duration_sum / len(pg_dump['pg_map']['pg_stats'])))
+    print("total number of objects: %d" % num_objects_sum)
+    print("average number of objects per pg: %d" % (num_objects_sum / len(pg_dump['pg_map']['pg_stats'])))
+    print("total size: %d bytes" % num_bytes_sum)
+    print("average pg size: %d bytes" % (num_bytes_sum / len(pg_dump['pg_map']['pg_stats'])))
+    print("per pool scrub duration:")
+    for pool in num:
+        print("  %s: %d sec (%d pgs, %d sec/pg, %d bytes/pg, %d obj/pg)" %
+              (pool, scrub_duration_sum_pool[pool], num[pool],
+               scrub_duration_sum_pool[pool] / num[pool],
+               num_bytes_sum_pool[pool] / num[pool],
+               num_objects_sum_pool[pool] / num[pool]))
 
-    jq -r '.pg_map.pg_stats[] | (.pgid + " " + (.scrub_duration | tostring))' < "${pgdump}" |
-    awk '{
-      n++
-      sum += $2
-      pool = substr($1, 1, index($1, ".") - 1)
-      num[pool]++
-      sum_pool[pool] += $2
-    }
-    END {
-	  printf("total number of pgs: %d\n", n)
-	  printf("total scrub duration: %.2f sec\n", sum)
-	  printf("average scrub duration: %.2f sec\n", sum / n)
-	  print "per pool scrub duration:"
-	  for (p in num) {
-		printf("  %s: %.2f sec (%d pgs, %.2f sec/pg)\n",
-                       p, sum_pool[p], num[p], sum_pool[p] / num[p])
-	  }
-	}
-    '
-}
+def check_pg_on_same_host():
+    osd_metadata = get_osd_metadata()
+    pg_dump = get_pg_dump()
 
-case "$1" in
-    description)
-        description
-        exit 0
-        ;;
-    help)
-        help
-        exit 0
-        ;;
-    ls-by-osd|ls-by-primary|info|stats|scrub-stats)
-        cmd="$(echo $1 | sed -e 's/-/_/g')"
-        shift
-        ${cmd} "$@"
-        exit $?
-        ;;
-    *)
-	echo "invalid command: '$1'" >&2
-	echo "" >&2
-        help >&2
-        exit 1
-        ;;
-esac
+    osds = {o['id'] : o['hostname'] for o in osd_metadata}
+
+    exit_code = 0
+    for pg in pg_dump['pg_map']['pg_stats']:
+        hosts = {}
+        for osd_id in pg['up']:
+            h = osds[osd_id]
+            if h in hosts:
+                print(f"{pg['pgid']}: osd.{osd_id} and osd.{hosts[h]} are on the same host {h}")
+                exit_code += 1
+            else:
+                hosts[h] = osd_id
+
+    exit(exit_code)
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+
+    if 'check-pg-on-same-host' in args.command:
+        check_pg_on_same_host()
+    elif 'ls-by-osd' in args.command:
+        ls_by_osd(args.id)
+    elif 'ls-by-primary' in args.command:
+        ls_by_primary(args.id)
+    elif 'info' in args.command:
+        info(args.id)
+    elif 'stats' in args.command:
+        stats(args.id)
+    elif 'scrub-stats' in args.command:
+        scrub_stats()
+    else:
+        print('invalid command: {}'.format(args.command), file=sys.stderr)
+        print('', file=sys.stderr)
+        parser.print_help()
+        exit(1)
+
+#
+# main
+#
+
+main()

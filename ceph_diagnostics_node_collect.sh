@@ -7,6 +7,7 @@
 RESULTS_DIR=$(mktemp -d /tmp/ceph-collect-$(hostname)_$(date +%Y%m%d_%H%I%S)-XXX)
 RESULT_ARCHIVE=${RESULTS_DIR}.tar.gz
 CEPHADM_CMD=cephadm
+JOURNALCTL_SINCE="${JOURNALCTL_SINCE:--1 week}"
 
 trap cleanup INT TERM EXIT
 
@@ -154,6 +155,12 @@ while read fsid name ; do
     ${CEPHADM_CMD} logs --fsid ${fsid} --name ${name} > ${RESULTS_DIR}/log/${name}.log 2>&1
 done
 
+info "collecting system logs ..."
+dmesg > ${RESULTS_DIR}/dmesg 2> ${RESULTS_DIR}/dmesg.log
+journalctl -S "${JOURNALCTL_SINCE}" > \
+	   ${RESULTS_DIR}/journalctl 2> ${RESULTS_DIR}/journalctl.log
+
+info "archiving result ..."
 tar -czf ${RESULT_ARCHIVE} -C $(dirname ${RESULTS_DIR}) $(basename ${RESULTS_DIR})
 
 info "done"

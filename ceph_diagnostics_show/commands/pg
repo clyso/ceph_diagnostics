@@ -12,7 +12,7 @@ import sys
 
 CEPH_DIAGNOSTICS_COLLECT_DIR = os.environ.get('CEPH_DIAGNOSTICS_COLLECT_DIR')
 
-description="process pg dump"
+cmd_description="process pg dump"
 epilog="""
 Commands:
   ls-by-osd <id|osd.id>      - list pg on osd [osd]
@@ -23,7 +23,7 @@ Commands:
   check-pg-on-same-host      - check if pgs are on the same host"""
 
 parser = argparse.ArgumentParser(prog='cds osd',
-                                 description=description,
+                                 description=cmd_description,
                                  epilog=epilog,
                                  formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument(

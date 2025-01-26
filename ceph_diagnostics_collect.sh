@@ -12,6 +12,10 @@ QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
 VERBOSE="${VERBOSE:-N}"
 COLLECT_ALL_OSD_ASOK_STATS="${COLLECT_ALL_OSD_ASOK_STATS:-N}"
+RESET_MDS_PERF_AND_SLEEP="${RESET_MDS_PERF_AND_SLEEP:-0}"
+RESET_MGR_PERF_AND_SLEEP="${RESET_MGR_PERF_AND_SLEEP:-0}"
+RESET_MON_PERF_AND_SLEEP="${RESET_MON_PERF_AND_SLEEP:-0}"
+RESET_OSD_PERF_AND_SLEEP="${RESET_OSD_PERF_AND_SLEEP:-0}"
 
 #
 # Functions
@@ -24,14 +28,19 @@ usage()
     echo
     echo "Options:"
     echo
-    echo "  -h | --help                     print this help and exit"
-    echo "  -c | --ceph-config-file <file>  ceph configuration file"
-    echo "  -q | --query-inactive-pg        query inactive pg"
-    echo "  -r | --results-dir <dir>        directory to store result"
-    echo "  -t | --timeout <seconds>        timeout for ceph operations"
-    echo "  -u | --uncensored               don't hide sensitive data"
-    echo "  -v | --verbose                  be verbose"
-    echo "  -a | --all-osd-asok-stats       get data via admin socket (tell) for all osds"
+    echo "  -h | --help                            print this help and exit"
+    echo "  -c | --ceph-config-file <file>         ceph configuration file"
+    echo "  -q | --query-inactive-pg               query inactive pg"
+    echo "  -r | --results-dir <dir>               directory to store result"
+    echo "  -t | --timeout <seconds>               timeout for ceph operations"
+    echo "  -u | --uncensored                      don't hide sensitive data"
+    echo "  -v | --verbose                         be verbose"
+    echo "  -a | --all-osd-asok-stats              get data via admin socket (tell)"
+    echo "                                         for all osds"
+    echo "  -D | --mds-perf-reset-and-sleep <sec>  reset mds perf counters and sleep"
+    echo "  -G | --mgr-perf-reset-and-sleep <sec>  reset mgr perf counters and sleep"
+    echo "  -M | --mon-perf-reset-and-sleep <sec>  reset mon perf counters and sleep"
+    echo "  -O | --osd-perf-reset-and-sleep <sec>  reset osd perf counters and sleep"
     echo
 }
 
@@ -127,6 +136,12 @@ get_monitor_info() {
     store ${t}-map      ${CEPH} mon getmap
     store ${t}-metadata ${CEPH} mon metadata
 
+    if [ "${RESET_MON_PERF_AND_SLEEP}" -gt 0 ]; then
+	store ${t}-perf_reset ${CEPH} tell mon.\* perf reset all
+	info "sleeping for ${RESET_MON_PERF_AND_SLEEP} sec after reseting mon perf counters ..."
+	sleep ${RESET_MON_PERF_AND_SLEEP}
+    fi
+
     show_stored ${t}-dump |
     sed -nEe 's/^.* (mon\..*)$/\1/p' |
     while read mon; do
@@ -160,6 +175,12 @@ get_manager_info() {
     store ${t}-dump       ${CEPH} mgr dump
     store ${t}-metadata   ${CEPH} mgr metadata
 
+    if [ "${RESET_MGR_PERF_AND_SLEEP}" -gt 0 ]; then
+	store ${t}-perf_reset ${CEPH} tell mgr.\* perf reset all
+	info "sleeping for ${RESET_MGR_PERF_AND_SLEEP} sec after reseting mgr perf counters ..."
+	sleep ${RESET_MGR_PERF_AND_SLEEP}
+    fi
+
     show_stored ${t}-dump |
     sed -nEe 's/^.*"active_name": "([^"]*)".*$/mgr.\1/p' |
     while read mgr; do
@@ -191,6 +212,12 @@ get_osd_info() {
     store ${t}-perf      ${CEPH} osd perf
 
     show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
+
+    if [ "${RESET_OSD_PERF_AND_SLEEP}" -gt 0 ]; then
+	store ${t}-perf_reset ${CEPH} tell osd.\* perf reset all
+	info "sleeping for ${RESET_OSD_PERF_AND_SLEEP} sec after reseting osd perf counters ..."
+	sleep ${RESET_OSD_PERF_AND_SLEEP}
+    fi
 
     # Sort osds by weight and collect stats for one of every class
     # with highest weight, unless COLLECT_ALL_OSD_ASOK_STATS is set,
@@ -263,6 +290,12 @@ get_fs_info() {
     store ${t}-ls     ${CEPH} fs ls
     store ${t}-status ${CEPH} fs status
     store ${t}-dump   ${CEPH} fs dump
+
+    if [ "${RESET_MDS_PERF_AND_SLEEP}" -gt 0 ]; then
+	store ${t}-perf_reset ${CEPH} tell mds.\* perf reset all
+	info "sleeping for ${RESET_MDS_PERF_AND_SLEEP} sec after reseting mds perf counters ..."
+	sleep ${RESET_MDS_PERF_AND_SLEEP}
+    fi
 
     show_stored ${t}-dump |
     sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p' |
@@ -361,7 +394,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o ac:hqr:t:uv --long all-osd-asok-stats,ceph-config-file:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose -- "$@")
+OPTIONS=$(getopt -o ac:hqr:t:uvD:G:M:O: --long all-osd-asok-stats,ceph-config-file:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep: -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -401,6 +434,22 @@ while true; do
 	-v|--verbose)
 	    VERBOSE=Y
 	    shift
+	    ;;
+	-D|--mds-perf-reset-and-sleep)
+	    RESET_MDS_PERF_AND_SLEEP="$2"
+	    shift 2
+	    ;;
+	-G|--mgr-perf-reset-and-sleep)
+	    RESET_MGR_PERF_AND_SLEEP="$2"
+	    shift 2
+	    ;;
+	-M|--mon-perf-reset-and-sleep)
+	    RESET_MON_PERF_AND_SLEEP="$2"
+	    shift 2
+	    ;;
+	-O|--osd-perf-reset-and-sleep)
+	    RESET_OSD_PERF_AND_SLEEP="$2"
+	    shift 2
 	    ;;
 	--)
 	    shift

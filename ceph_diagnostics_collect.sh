@@ -72,8 +72,13 @@ censor_auth() {
 
 store() {
     local name="$1"; shift
+    local log_name="${name}.log"  # Default log filename
 
-    "$@" > "${RESULTS_DIR}/${name}" 2> "${RESULTS_DIR}/${name}".log
+    if echo "$name" | grep -qE "\.json$"; then
+        log_name="${name%.json}-json.log"
+    fi
+
+    "$@" > "${RESULTS_DIR}/${name}" 2> "${RESULTS_DIR}/${log_name}"
 }
 
 show_stored() {
@@ -104,6 +109,12 @@ get_ceph_info() {
     store ${t}-config_dump censor_config ${CEPH} config dump
     store ${t}-config_log  censor_config ${CEPH} config log
     store ${t}-auth_list   censor_auth ${CEPH} auth list
+
+    store ${t}-status.json          ${CEPH} status -f json
+    store ${t}-versions.json        ${CEPH} versions -f json
+    store ${t}-config_dump.json     censor_config ${CEPH} config dump -f json
+    store ${t}-config_log.json      censor_config ${CEPH} config log -f json
+    store ${t}-auth_list.json       censor_auth ${CEPH} auth list -f json
 }
 
 get_health_info() {
@@ -120,9 +131,16 @@ get_health_info() {
     store ${t}-crash_ls        ${CEPH} crash ls
     store ${t}-balancer-status ${CEPH} balancer status
 
+    store ${t}-detail.json          ${CEPH} health detail -f json
+    store ${t}-df-detail.json       ${CEPH} df detail -f json
+    store ${t}-report.json          ${CEPH} report -f json
+    store ${t}-crash_ls.json        ${CEPH} crash ls -f json
+    store ${t}-balancer-status.json ${CEPH} balancer status -f json
+
     show_stored ${t}-crash_ls | grep -o '^[0-9][^ ]*' |
     while read id; do
-        store ${t}-crash_info_${id} ${CEPH} crash info ${id}
+        store ${t}-crash_info_${id} ${CEPH} crash info ${id} 
+        store ${t}-crash_info_${id}.json ${CEPH} crash info ${id} -f json
     done
 }
 
@@ -136,13 +154,17 @@ get_monitor_info() {
     store ${t}-map      ${CEPH} mon getmap
     store ${t}-metadata ${CEPH} mon metadata
 
+    store ${t}-stat.json    ${CEPH} mon stat -f json
+    store ${t}-dump.json    ${CEPH} mon dump -f json
+    store ${t}-metadata.json ${CEPH} mon metadata -f json
+
     if [ "${RESET_MON_PERF_AND_SLEEP}" -gt 0 ]; then
 	store ${t}-perf_reset ${CEPH} tell mon.\* perf reset all
 	info "sleeping for ${RESET_MON_PERF_AND_SLEEP} sec after reseting mon perf counters ..."
 	sleep ${RESET_MON_PERF_AND_SLEEP}
     fi
 
-    show_stored ${t}-dump |
+        show_stored ${t}-dump |
     sed -nEe 's/^.* (mon\..*)$/\1/p' |
     while read mon; do
         store ${t}-${mon}-config_diff            ${CEPH} tell ${mon} config diff
@@ -154,6 +176,16 @@ get_monitor_info() {
         store ${t}-${mon}-ops                    ${CEPH} tell ${mon} ops
         store ${t}-${mon}-perf_dump              ${CEPH} tell ${mon} perf dump
         store ${t}-${mon}-sessions               ${CEPH} tell ${mon} sessions
+
+        store ${t}-${mon}-config_diff.json            ${CEPH} tell ${mon} config diff -f json
+        store ${t}-${mon}-config_show.json            ${CEPH} tell ${mon} config show -f json
+        store ${t}-${mon}-dump_historic_ops.json      ${CEPH} tell ${mon} dump_historic_ops -f json
+        store ${t}-${mon}-dump_historic_slow_ops.json ${CEPH} tell ${mon} dump_historic_slow_ops -f json
+        store ${t}-${mon}-dump_mempools.json          ${CEPH} tell ${mon} dump_mempools -f json
+        store ${t}-${mon}-mon_status.json             ${CEPH} tell ${mon} mon_status -f json
+        store ${t}-${mon}-ops.json                    ${CEPH} tell ${mon} ops -f json
+        store ${t}-${mon}-perf_dump.json              ${CEPH} tell ${mon} perf dump -f json
+        store ${t}-${mon}-sessions.json               ${CEPH} tell ${mon} sessions -f json
     done
 }
 
@@ -163,7 +195,7 @@ get_device_info() {
     info "collecting device info ..."
 
     store ${t}-ls      ${CEPH} device ls
-    store ${t}-ls_json ${CEPH} device ls --format json
+    store ${t}-ls_json ${CEPH} device ls --format json # TODO: update the extension
 }
 
 get_manager_info() {
@@ -174,6 +206,10 @@ get_manager_info() {
     store ${t}-ls-modules ${CEPH} mgr module ls
     store ${t}-dump       ${CEPH} mgr dump
     store ${t}-metadata   ${CEPH} mgr metadata
+
+    store ${t}-ls-modules.json  ${CEPH} mgr module ls -f json
+    store ${t}-dump.json        ${CEPH} mgr dump -f json
+    store ${t}-metadata.json    ${CEPH} mgr metadata -f json
 
     if [ "${RESET_MGR_PERF_AND_SLEEP}" -gt 0 ]; then
 	store ${t}-perf_reset ${CEPH} tell mgr.\* perf reset all
@@ -192,6 +228,15 @@ get_manager_info() {
         store ${t}-${mgr}-mgr_status    ${CEPH} tell ${mgr} mgr_status
         store ${t}-${mgr}-perf_dump     ${CEPH} tell ${mgr} perf dump
         store ${t}-${mgr}-status        ${CEPH} tell ${mgr} status
+
+        store ${t}-${mgr}-mds_requests.json  ${CEPH} tell ${mgr} mds_requests -f json
+        store ${t}-${mgr}-config_diff.json   ${CEPH} tell ${mgr} config diff -f json
+        store ${t}-${mgr}-config_show.json   ${CEPH} tell ${mgr} config show -f json
+        store ${t}-${mgr}-dump_cache.json    ${CEPH} tell ${mgr} dump_cache -f json
+        store ${t}-${mgr}-dump_mempools.json ${CEPH} tell ${mgr} dump_mempools -f json
+        store ${t}-${mgr}-mgr_status.json    ${CEPH} tell ${mgr} mgr_status -f json
+        store ${t}-${mgr}-perf_dump.json     ${CEPH} tell ${mgr} perf dump -f json
+        store ${t}-${mgr}-status.json        ${CEPH} tell ${mgr} status -f json
     done
 }
 
@@ -201,7 +246,7 @@ get_osd_info() {
     info "collecting osd info ..."
 
     store ${t}-tree      ${CEPH} osd tree
-    store ${t}-tree_json ${CEPH} osd tree --format json
+    store ${t}-tree_json ${CEPH} osd tree --format json # TODO: update the extension
     store ${t}-df        ${CEPH} osd df
     store ${t}-df-tree   ${CEPH} osd df tree
     store ${t}-dump      ${CEPH} osd dump
@@ -210,6 +255,14 @@ get_osd_info() {
     store ${t}-map       ${CEPH} osd getmap
     store ${t}-metadata  ${CEPH} osd metadata
     store ${t}-perf      ${CEPH} osd perf
+
+    store ${t}-tree.json ${CEPH} osd tree -f json
+    store ${t}-df.json   ${CEPH} osd df -f json
+    store ${t}-df-tree.json ${CEPH} osd df tree -f json
+    store ${t}-dump.json ${CEPH} osd dump -f json
+    store ${t}-stat.json ${CEPH} osd stat -f json
+    store ${t}-metadata.json  ${CEPH} osd metadata -f json
+    store ${t}-perf.json      ${CEPH} osd perf -f json
 
     show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
 
@@ -249,6 +302,18 @@ get_osd_info() {
         store ${t}-${osd}-dump_scrubs             ${CEPH} tell ${osd} dump_scrubs
         store ${t}-${osd}-perf_dump               ${CEPH} tell ${osd} perf dump
         store ${t}-${osd}-status                  ${CEPH} tell ${osd} status
+
+        store ${t}-${osd}-cache_status.json             ${CEPH} tell ${osd} cache status -f json
+        store ${t}-${osd}-config_diff.json              ${CEPH} tell ${osd} config diff -f json
+        store ${t}-${osd}-config_show.json              ${CEPH} tell ${osd} config show -f json
+        store ${t}-${osd}-dump_historic_ops.json        ${CEPH} tell ${osd} dump_historic_ops -f json
+        store ${t}-${osd}-dump_mempools.json            ${CEPH} tell ${osd} dump_mempools -f json
+        store ${t}-${osd}-dump_ops_in_flight.json       ${CEPH} tell ${osd} dump_ops_in_flight -f json
+        store ${t}-${osd}-dump_osd_network.json         ${CEPH} tell ${osd} dump_osd_network -f json
+        store ${t}-${osd}-dump_scrub_reservations.json  ${CEPH} tell ${osd} dump_scrub_reservations -f json
+        store ${t}-${osd}-dump_scrubs.json              ${CEPH} tell ${osd} dump_scrubs -f json
+        store ${t}-${osd}-perf_dump.json                ${CEPH} tell ${osd} perf dump -f json
+        store ${t}-${osd}-status.json                   ${CEPH} tell ${osd} status -f json
     done
 }
 
@@ -261,13 +326,18 @@ get_pg_info() {
     store ${t}-stat       ${CEPH} pg stat
     store ${t}-dump       ${CEPH} pg dump
     store ${t}-dump_stuck ${CEPH} pg dump_stuck
-    store ${t}-dump_json  ${CEPH} pg dump --format json
+    store ${t}-dump_json  ${CEPH} pg dump --format json # TODO: update the extension
+
+    store ${t}-stat.json       ${CEPH} pg stat -f json
+    store ${t}-dump.json       ${CEPH} pg dump -f json
+    store ${t}-dump_stuck.json ${CEPH} pg dump_stuck -f json
 
     if [ "$QUERY_INACTIVE_PG" = Y ]; then
 	store ${t}-dump_stuck_inactive ${CEPH} pg dump_stuck inactive
 	show_stored ${t}-dump_stuck_inactive | grep -o '^[0-9][^ ]*' |
         while read pgid; do
             store ${t}-query-${pgid} ${CEPH} pg ${pgid} query
+            store ${t}-query-${pgid}.json ${CEPH} pg ${pgid} query -f json
         done
     fi
 }
@@ -279,6 +349,9 @@ get_mds_info() {
 
     store ${t}-stat ${CEPH} mds stat
     store ${t}-metadata ${CEPH} mds metadata
+
+    store ${t}-stat.json ${CEPH} mds stat -f json    
+    store ${t}-metadata.json ${CEPH} mds metadata -f json
 }
 
 get_fs_info() {
@@ -290,6 +363,10 @@ get_fs_info() {
     store ${t}-ls     ${CEPH} fs ls
     store ${t}-status ${CEPH} fs status
     store ${t}-dump   ${CEPH} fs dump
+
+    store ${t}-ls.json     ${CEPH} fs ls -f json
+    store ${t}-status.json ${CEPH} fs status -f json
+    store ${t}-dump.json   ${CEPH} fs dump -f json
 
     if [ "${RESET_MDS_PERF_AND_SLEEP}" -gt 0 ]; then
 	store ${t}-perf_reset ${CEPH} tell mds.\* perf reset all
@@ -313,6 +390,20 @@ get_fs_info() {
         store ${t}-${mds}-config_show        ${CEPH} tell ${mds} config show
         store ${t}-${mds}-damage_ls          ${CEPH} tell ${mds} damage ls
         store ${t}-${mds}-dump_blocked_ops   ${CEPH} tell ${mds} dump_blocked_ops
+
+        store ${t}-${mds}-cache_status.json       ${CEPH} tell ${mds} cache status -f json
+        store ${t}-${mds}-dump_historic_ops.json  ${CEPH} tell ${mds} dump historic_ops -f json
+        store ${t}-${mds}-dump_loads.json         ${CEPH} tell ${mds} dump loads -f json
+        store ${t}-${mds}-dump_mempools.json      ${CEPH} tell ${mds} dump mempools -f json
+        store ${t}-${mds}-dump_ops_in_flight.json ${CEPH} tell ${mds} dump ops_in_flight -f json
+        store ${t}-${mds}-perf_dump.json          ${CEPH} tell ${mds} perf dump -f json
+        store ${t}-${mds}-scrub_status.json       ${CEPH} tell ${mds} scrub status -f json
+        store ${t}-${mds}-session_ls.json         ${CEPH} tell ${mds} session ls -f json
+        store ${t}-${mds}-status.json             ${CEPH} tell ${mds} status -f json
+        store ${t}-${mds}-config_diff.json        ${CEPH} tell ${mds} config diff -f json
+        store ${t}-${mds}-config_show.json        ${CEPH} tell ${mds} config show -f json
+        store ${t}-${mds}-damage_ls.json          ${CEPH} tell ${mds} damage ls -f json
+        store ${t}-${mds}-dump_blocked_ops.json   ${CEPH} tell ${mds} dump blocked_ops -f json
     done
 }
 
@@ -338,6 +429,12 @@ get_radosgw_admin_info() {
     store ${t}-metadata_list_bucket.instance ${RADOSGW_ADMIN} metadata list bucket.instance
     store ${t}-period_get                    ${RADOSGW_ADMIN} period get
     store ${t}-sync_status                   ${RADOSGW_ADMIN} sync status
+
+    store ${t}-bucket_stats.json                  ${RADOSGW_ADMIN} bucket stats --format json
+    store ${t}-bucket_limit_check.json            ${RADOSGW_ADMIN} bucket limit check --format json
+    store ${t}-metadata_list_bucket.instance.json ${RADOSGW_ADMIN} metadata list bucket.instance --format json
+    store ${t}-period_get.json                    ${RADOSGW_ADMIN} period get --format json
+    store ${t}-sync_status.json                   ${RADOSGW_ADMIN} sync status --format json
 }
 
 get_orch_info() {
@@ -349,6 +446,9 @@ get_orch_info() {
     store ${t}-ls      ${CEPH} orch ls
     store ${t}-ls_yaml ${CEPH} orch ls --format yaml
     store ${t}-ps      ${CEPH} orch ps
+
+    store ${t}-status.json  ${CEPH} orch status -f json
+    store ${t}-ps.json      ${CEPH} orch ps -f json
 }
 
 archive_result() {

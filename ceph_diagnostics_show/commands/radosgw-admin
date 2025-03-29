@@ -48,7 +48,7 @@ case "$cmd" in
         description
         exit 0
         ;;
-    help)
+    help|"help "*|-h|"--help")
         help
         exit 0
         ;;

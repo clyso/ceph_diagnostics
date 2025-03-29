@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import statistics  # Add this to imports at the top
 
 
 #
@@ -116,22 +117,37 @@ def stats(pgids):
 def scrub_stats():
     pg_dump = get_pg_dump()
     scrub_duration_sum = 0
+    scrub_durations = []  # for overall stats
+    max_scrub_duration = 0
+    min_scrub_duration = float('inf')
     num_objects_sum = 0
     num_bytes_sum = 0
     scrub_duration_sum_pool = {}
     num_objects_sum_pool = {}
     num_bytes_sum_pool = {}
     num = {}
+    # New: dictionary to store durations per pool
+    pool_durations = {}
+
     for pg in pg_dump['pg_map']['pg_stats']:
         if 'scrub_duration' in pg:
-            scrub_duration_sum += pg['scrub_duration']
+            duration = pg['scrub_duration']
+            scrub_duration_sum += duration
+            scrub_durations.append(duration)
             num_objects_sum += pg['stat_sum']['num_objects']
             num_bytes_sum += pg['stat_sum']['num_bytes']
             pool = pg['pgid'].split('.')[0]
+            
+            # Initialize pool lists if not exists
+            if pool not in pool_durations:
+                pool_durations[pool] = []
+            pool_durations[pool].append(duration)
+            
             num[pool] = num.get(pool, 0) + 1
-            scrub_duration_sum_pool[pool] = scrub_duration_sum_pool.get(pool, 0) + pg['scrub_duration']
+            scrub_duration_sum_pool[pool] = scrub_duration_sum_pool.get(pool, 0) + duration
             num_objects_sum_pool[pool] = num_objects_sum_pool.get(pool, 0) + pg['stat_sum']['num_objects']
             num_bytes_sum_pool[pool] = num_bytes_sum_pool.get(pool, 0) + pg['stat_sum']['num_bytes']
+
     print("total number of pgs: %d" % len(pg_dump['pg_map']['pg_stats']))
     print("total scrub duration: %d sec" % scrub_duration_sum)
     print("average scrub duration: %d sec" % (scrub_duration_sum / len(pg_dump['pg_map']['pg_stats'])))
@@ -141,11 +157,16 @@ def scrub_stats():
     print("average pg size: %d bytes" % (num_bytes_sum / len(pg_dump['pg_map']['pg_stats'])))
     print("per pool scrub duration:")
     for pool in num:
-        print("  %s: %d sec (%d pgs, %d sec/pg, %d bytes/pg, %d obj/pg)" %
+        pool_std_dev = 0.0
+        if len(pool_durations[pool]) > 1:  # Need at least 2 values for std dev
+            pool_std_dev = statistics.stdev(pool_durations[pool])
+            
+        print("  %s: %d sec (%d pgs, %d sec/pg, %d bytes/pg, %d obj/pg, %.2f sec std_dev)" %
               (pool, scrub_duration_sum_pool[pool], num[pool],
                scrub_duration_sum_pool[pool] / num[pool],
                num_bytes_sum_pool[pool] / num[pool],
-               num_objects_sum_pool[pool] / num[pool]))
+               num_objects_sum_pool[pool] / num[pool],
+               pool_std_dev))
 
 def check_pg_on_same_host():
     osd_metadata = get_osd_metadata()

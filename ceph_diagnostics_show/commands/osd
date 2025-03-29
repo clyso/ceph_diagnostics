@@ -63,7 +63,11 @@ def osd_sum(ids, filter_dev_type):
     hosts = {}
     dev_types = {"hdd": 0, "hybrid": 0, "ssd": 0}
     for osd in m:
-        if not int(osd["rotational"]):
+        # Check for SSDs/NVMe through multiple indicators
+        if not int(osd["rotational"]) or \
+           (osd.get("bluestore_bdev_dev_node", "").startswith("/dev/nvme")) or \
+           (osd.get("bluestore_bdev_devices", "").startswith("nvme")) or \
+           osd.get("bluestore_bdev_type") == "ssd":
             dev_type = "ssd"
         elif osd.get("bluefs_db_rotational") is None or \
              int(osd["bluefs_db_rotational"]):

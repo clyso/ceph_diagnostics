@@ -36,6 +36,10 @@ help() {
 
 set_ceph_diagnostics_collect_dir() {
     test -n "${CEPH_DIAGNOSTICS_COLLECT_DIR}" && return
+    local allow_missing=0
+    if [ "$1" = "--allow-missing" ]; then
+        allow_missing=1
+    fi
 
     local dir=$(pwd)
 
@@ -47,6 +51,10 @@ set_ceph_diagnostics_collect_dir() {
     done
     if [ -e "${dir}/ceph_cluster_info-fsid" ]; then
         CEPH_DIAGNOSTICS_COLLECT_DIR="${dir}"
+        return 0
+    elif [ ${allow_missing} -eq 1 ]; then
+        # Directory not found, but missing is allowed (e.g., for help)
+        return 0
     else
         echo "$(basename $0) should be run inside ceph-collect directory" >&2
         exit 1
@@ -68,8 +76,10 @@ run_cmd() {
         exit 1
     fi
 
-    if [ "$1" != help ]; then
-	set_ceph_diagnostics_collect_dir
+    if [ "$1" = help ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        set_ceph_diagnostics_collect_dir --allow-missing
+    else
+        set_ceph_diagnostics_collect_dir
     fi
 
     ${CDS_COMMANDS_DIR}/${cmd} $@
@@ -79,11 +89,13 @@ run_cmd() {
 # Main
 #
 
-if [ -z "$1" ]; then
-    help $@
-elif [ "$1" = help ]; then
-    shift
+if [ -z "$1" ] || [ "$1" = help ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    # (e.g., cds help pool)
+    if [ "$1" = help ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        shift
+    fi
     help $@
 else
     run_cmd $@
 fi
+

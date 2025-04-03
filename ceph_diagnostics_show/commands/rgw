@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import sys
+
+#
+# Global
+#
+
+cmd_description = 'Show RGW bucket statistics'
+
+parser = argparse.ArgumentParser(prog='cds rgw', description=cmd_description)
+subparsers = parser.add_subparsers(dest='command')
+
+# Add top command parser
+top_parser = subparsers.add_parser('top', help='Show top N buckets sorted by specified metric')
+top_parser.add_argument('-n', type=int, default=20, help='Number of buckets to show (default: 20)')
+top_parser.add_argument('-s', '--sort', choices=['size', 'objects', 'shards', 'objects_per_shard'],
+                       default='size', help='Sort criteria (default: size)')
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def bytes_to_tib(bytes_value):
+    return bytes_value / (1024 ** 4)  # 1 TiB = 1024^4 bytes
+
+def rgw_top(args):
+    try:
+        stats_file = 'radosgw_admin_info-bucket_stats'
+        
+        if not os.path.exists(stats_file):
+            print(f"Error: Bucket stats file '{stats_file}' not found.", file=sys.stderr)
+            print("Please ensure 'radosgw-admin bucket stats' was collected.", file=sys.stderr)
+            return
+
+        with open(stats_file, 'r') as f:
+            bucket_stats_content = f.read()
+
+        if not bucket_stats_content.strip():
+            print(f"Warning: Bucket stats file '{stats_file}' is empty.", file=sys.stderr)
+            return
+
+        try:
+            bucket_stats_data = json.loads(bucket_stats_content)
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON from '{stats_file}': {e}", file=sys.stderr)
+            return
+
+        if not isinstance(bucket_stats_data, list):
+            if isinstance(bucket_stats_data, dict) and 'bucket' in bucket_stats_data:
+                bucket_stats_data = [bucket_stats_data]
+            else:
+                print(f"Error: Expected a list of buckets in '{stats_file}', but got {type(bucket_stats_data)}", file=sys.stderr)
+                return
+
+        analyzed_buckets = []
+        for bucket_info in bucket_stats_data:
+            try:
+                bucket_name = bucket_info.get('bucket', 'N/A')
+                num_shards = bucket_info.get('num_shards', 0)
+                usage = bucket_info.get('usage', {}).get('rgw.main', {})
+                num_objects = usage.get('num_objects', 0)
+                bucket_size = usage.get('size', 0)
+
+                objects_per_shard = 0
+                if num_shards > 0:
+                    objects_per_shard = num_objects / num_shards
+
+                analyzed_buckets.append({
+                    'name': bucket_name,
+                    'num_objects': num_objects,
+                    'objects_per_shard': objects_per_shard,
+                    'bucket_size': bucket_size,
+                    'size_tib': bytes_to_tib(bucket_size),
+                    'num_shards': num_shards
+                })
+            except Exception as e:
+                print(f"Warning: Skipping bucket due to error processing its data: {e}", file=sys.stderr)
+                continue
+
+        # Sort based on specified criteria
+        sort_key = {
+            'size': 'bucket_size',
+            'objects': 'num_objects',
+            'shards': 'num_shards',
+            'objects_per_shard': 'objects_per_shard'
+        }[args.sort]
+        
+        analyzed_buckets.sort(key=lambda x: x[sort_key], reverse=True)
+        
+        # Limit to top N buckets
+        analyzed_buckets = analyzed_buckets[:args.n]
+
+        # Print header
+        header = '{:<50} {:>15} {:>10} {:>15} {:>18}'.format(
+            'Bucket Name', 'Num Objects', 'Shards', 'Size (TiB)', 'Objects/Shard')
+        print(header)
+        print('-' * len(header))
+
+        # Print bucket data
+        for bucket in analyzed_buckets:
+            print('{:<50} {:>15,} {:>10} {:>15,.2f} {:>18,.2f}'.format(
+                bucket['name'],
+                bucket['num_objects'],
+                bucket['num_shards'],
+                bucket['size_tib'],
+                bucket['objects_per_shard']
+            ))
+
+    except FileNotFoundError:
+        print(f"Error: Could not find bucket stats file '{stats_file}'.", file=sys.stderr)
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}", file=sys.stderr)
+
+def rgw_bucket_stats():
+    try:
+        # Get the current working directory (where the stats file should be)
+        stats_file = 'radosgw_admin_info-bucket_stats'
+        
+        # Check if the file exists
+        if not os.path.exists(stats_file):
+            print(f"Error: Bucket stats file '{stats_file}' not found.", file=sys.stderr)
+            print("Please ensure 'radosgw-admin bucket stats' was collected.", file=sys.stderr)
+            return
+
+        # Read and parse the bucket stats file
+        with open(stats_file, 'r') as f:
+            bucket_stats_content = f.read()
+
+        # Handle empty file
+        if not bucket_stats_content.strip():
+            print(f"Warning: Bucket stats file '{stats_file}' is empty.", file=sys.stderr)
+            return
+
+        # Parse the JSON content
+        try:
+            bucket_stats_data = json.loads(bucket_stats_content)
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON from '{stats_file}': {e}", file=sys.stderr)
+            return
+
+        # Ensure bucket_stats_data is a list
+        if not isinstance(bucket_stats_data, list):
+            if isinstance(bucket_stats_data, dict) and 'bucket' in bucket_stats_data:
+                bucket_stats_data = [bucket_stats_data]
+            else:
+                print(f"Error: Expected a list of buckets in '{stats_file}', but got {type(bucket_stats_data)}", file=sys.stderr)
+                return
+
+        analyzed_buckets = []
+        for bucket_info in bucket_stats_data:
+            try:
+                bucket_name = bucket_info.get('bucket', 'N/A')
+                num_shards = bucket_info.get('num_shards', 0)
+                usage = bucket_info.get('usage', {}).get('rgw.main', {})
+                num_objects = usage.get('num_objects', 0)
+                bucket_size = usage.get('size', 0)
+
+                # Calculate objects per shard, handle division by zero
+                objects_per_shard = 0
+                if num_shards > 0:
+                    objects_per_shard = num_objects / num_shards
+
+                analyzed_buckets.append({
+                    'name': bucket_name,
+                    'num_objects': num_objects,
+                    'objects_per_shard': objects_per_shard,
+                    'bucket_size': bucket_size,
+                    'num_shards': num_shards
+                })
+            except Exception as e:
+                print(f"Warning: Skipping bucket due to error processing its data: {e}", file=sys.stderr)
+                continue
+
+        # Sort buckets by size (ascending order - largest at bottom)
+        analyzed_buckets.sort(key=lambda x: x['bucket_size'])
+
+        # Print header
+        header = '{:<50} {:>15} {:>10} {:>20} {:>18}'.format(
+            'Bucket Name', 'Num Objects', 'Shards', 'Size (Bytes)', 'Objects/Shard')
+        print(header)
+        print('-' * len(header))
+
+        # Print bucket data
+        for bucket in analyzed_buckets:
+            print('{:<50} {:>15,} {:>10} {:>20,} {:>18,.2f}'.format(
+                bucket['name'],
+                bucket['num_objects'],
+                bucket['num_shards'],
+                bucket['bucket_size'],
+                bucket['objects_per_shard']
+            ))
+
+    except FileNotFoundError:
+        print(f"Error: Could not find bucket stats file '{stats_file}'.", file=sys.stderr)
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}", file=sys.stderr)
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+    if args.command == 'top':
+        rgw_top(args)
+    else:
+        rgw_bucket_stats()
+
+#
+# main
+#
+
+if __name__ == "__main__":
+    main()
+

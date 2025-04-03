@@ -30,7 +30,21 @@ parser.add_argument(
 def description():
     print(cmd_description)
 
+def get_pool_names():
+    report = get_report()
+    if report is None:
+        return []
+    return sorted([pool['pool_name'] for pool in report['osdmap']['pools']])
+
 def help():
+    print("\nAvailable pools:")
+    pool_names = get_pool_names()
+    if pool_names:
+        for pool in pool_names:
+            print(f"  {pool}")
+    else:
+        print("  No pools found")
+    print("")
     parser.print_help()
 
 def get_usage(report):

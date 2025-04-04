@@ -4,7 +4,7 @@
 # Collect Ceph cluster info
 #
 
-CENSORED="${CENSORED:-<CENSORED>}"
+CENSORED="${CENSORED:-CENSORED}"
 CEPH="${CEPH:-ceph}"
 CEPH_CONFIG_FILE="${CEPH_CONFIG_FILE:-/etc/ceph/ceph.conf}"
 CEPH_TIMEOUT="${CEPH_TIMEOUT:-10}"

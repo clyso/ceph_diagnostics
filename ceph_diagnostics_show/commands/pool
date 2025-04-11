@@ -30,7 +30,24 @@ parser.add_argument(
 def description():
     print(cmd_description)
 
+def get_pool_names():
+    try:
+        report = get_report()
+        if report is None:
+            return []
+        return sorted([pool['pool_name'] for pool in report['osdmap']['pools']])
+    except Exception:
+        return []
+
 def help():
+    print("\nAvailable pools:")
+    pool_names = get_pool_names()
+    if pool_names:
+        for pool in pool_names:
+            print(f"  {pool}")
+    else:
+        print("  No pools found")
+    print("")
     parser.print_help()
 
 def get_usage(report):
@@ -119,7 +136,7 @@ def main():
         if sys.argv[1] == 'description':
             description()
             exit(0)
-        elif sys.argv[1] == 'help':
+        elif sys.argv[1] == 'help' or sys.argv[1] == "-h" or sys.argv[1] == "--help":
             help()
             exit(0)
 

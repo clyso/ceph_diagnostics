@@ -4,7 +4,7 @@
 # Collect Ceph cluster info
 #
 
-CENSORED="${CENSORED:-CENSORED}"
+CENSORED="${CENSORED:-<CENSORED>}"
 CEPH="${CEPH:-ceph}"
 CEPH_CONFIG_FILE="${CEPH_CONFIG_FILE:-/etc/ceph/ceph.conf}"
 CEPH_TIMEOUT="${CEPH_TIMEOUT:-10}"
@@ -61,6 +61,35 @@ censor_config() {
     "$@" | sed "s/\(ACCESS_KEY\|SECRET_KEY\|PASSWORD\)\(\s*\).*/\1\2${CENSORED}/gi"
 }
 
+censor_config_json() {
+    if [ -z "${CENSORED}" ]; then
+        "$@"
+        return
+    fi
+
+    "$@" | jq 'map(if (.name | test("ACCESS_KEY|SECRET_KEY|PASSWORD"))
+                   then .value = "'"${CENSORED}"'"
+                   else . end)'
+}
+
+censor_config_log_json() {
+    if [ -z "${CENSORED}" ]; then
+        "$@"
+        return
+    fi
+
+    "$@" | jq 'map(
+                .changes |= map(
+                  if (.name | test("ACCESS_KEY|SECRET_KEY|PASSWORD"))
+                  then
+                    .previous_value = "'"${CENSORED}"'"
+                   |.new_value = "'"${CENSORED}"'"
+                  else .
+                  end
+                 )
+               )'
+}
+
 censor_auth() {
     if [ -z "${CENSORED}" ]; then
         "$@"
@@ -68,6 +97,15 @@ censor_auth() {
     fi
 
     "$@" | sed "s/\(key:\)\(\s*\).*/\1\2${CENSORED}/g"
+}
+
+censor_auth_json() {
+    if [ -z "${CENSORED}" ]; then
+        "$@"
+        return
+    fi
+
+    "$@" | jq '.auth_dump |= map(.key = "'"${CENSORED}"'")'
 }
 
 store() {
@@ -132,14 +170,17 @@ get_ceph_info() {
 
     info "collecting ceph cluster info ..."
 
-    store    ${t}-status      ${CEPH} status
-    store    ${t}-version     ${CEPH} version
-    store    ${t}-versions    ${CEPH} versions
-    store    ${t}-fsid        ${CEPH} fsid
-    store -s ${t}-ceph_conf   cat ${CEPH_CONFIG_FILE}
-    store    ${t}-config_dump censor_config ${CEPH} config dump
-    store    ${t}-config_log  censor_config ${CEPH} config log
-    store    ${t}-auth_list   censor_auth ${CEPH} auth list
+    store    ${t}-status           ${CEPH} status
+    store    ${t}-version          ${CEPH} version
+    store    ${t}-versions         ${CEPH} versions
+    store    ${t}-fsid             ${CEPH} fsid
+    store -S ${t}-ceph_conf        censor_config          cat ${CEPH_CONFIG_FILE}
+    store -S ${t}-config_dump      censor_config          ${CEPH} config dump
+    store -S ${t}-config_dump.json censor_config_json     ${CEPH} config dump -f json
+    store -S ${t}-config_log       censor_config          ${CEPH} config log
+    store -S ${t}-config_log.json  censor_config_log_json ${CEPH} config log -f json
+    store -S ${t}-auth_list        censor_auth            ${CEPH} auth list
+    store -S ${t}-auth_list.json   censor_auth_json       ${CEPH} auth list -f json
 }
 
 get_health_info() {

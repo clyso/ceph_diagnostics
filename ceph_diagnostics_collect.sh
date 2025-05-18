@@ -145,12 +145,12 @@ store() {
 	"$@" -f json > "${RESULTS_DIR}/${name}.json" 2>> \
 	     "${RESULTS_DIR}/${log_name}"
     elif [ ${skip_json} -eq 1 ]; then
-	ln -s "${RESULTS_DIR}/${name}" "${RESULTS_DIR}/${name}.json"
+	ln -sr "${RESULTS_DIR}/${name}" "${RESULTS_DIR}/${name}.json"
     fi
 
     # TODO: remove this when all tools are updated to use *.json files only.
     if [ $json_file_compat -eq 1 ]; then
-        ln -s "${RESULTS_DIR}/${name}.json" "${RESULTS_DIR}/${name}_json"
+        ln -sr "${RESULTS_DIR}/${name}.json" "${RESULTS_DIR}/${name}_json"
     fi
 }
 

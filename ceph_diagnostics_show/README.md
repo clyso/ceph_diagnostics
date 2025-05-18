@@ -119,22 +119,12 @@ $ cds ceph status
 If you have access to them you may easily integrate them with `cds`.
 
 For `ceph-copilot` and `clyso-fsa` integration, just make sure the `copilot`
-and `fsa` commands are in the `PATH` and running.  For example:
+and `fsa` commands are in the `PATH` and running. Alternatively you may use
+`CEPH_COPILOT` and `CLYSO_FSA` environment variables, like below:
 
 ```
-$ cd ~/clyso/ceph-copilot
-$ export PYTHONPATH=$(pwd)/src:$PYTHONPATH
-$ PATH=$(pwd)/copilot:$PATH
-$ cd ~/clyso/clyso-fsa
-$ PATH=$(pwd)/src:$PATH
-```
-
-Alternatively you may set `CEPH_COPILOT` and `CLYSO_FSA` environment variables,
-like below:
-
-```
-export CEPH_COPILOT="PYTHONPATH=$HOME/clyso/ceph-copilot/src:$PYTHONPATH python3 $HOME/clyso/ceph-copilot/copilot/copilot"
-export CLYSO_FSA="PYTHONPATH=$HOME/clyso/ceph-copilot/src:$PYTHONPATH python3 $HOME/clyso/clyso-fsa/src/fsa"
+export CEPH_COPILOT='source $HOME/clyso/ceph-copilot/.venv/bin/activate && ceph-copilot'
+export CLYSO_FSA='source $HOME/clyso/clyso-fsa/.clyso-venv/bin/activate && PYTHONPATH=$HOME/clyso/ceph-copilot/copilot/src python3 $HOME/clyso/clyso-fsa/src/fsa'
 ```
 
 For `cct` integration, when you have it already configured, as described in its

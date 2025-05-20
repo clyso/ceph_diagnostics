@@ -6,6 +6,10 @@ import os
 import sys
 import statistics  # Add this to imports at the top
 
+sys.path.append(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from common import json_load
+
 
 #
 # Global
@@ -58,13 +62,14 @@ def get_osd_id(name):
     return int(name)
 
 def get_pg_dump():
-    with open(CEPH_DIAGNOSTICS_COLLECT_DIR + "/pg_info-dump_json", "r") as f:
-        return json.load(f)
+    return json_load(
+        os.path.join(CEPH_DIAGNOSTICS_COLLECT_DIR, "pg_info-dump_json")
+    )
 
 def get_osd_metadata():
-    with open(os.path.join(CEPH_DIAGNOSTICS_COLLECT_DIR,
-                           "osd_info-metadata"), "r") as f:
-        return json.load(f)
+    return json_load(
+        os.path.join(CEPH_DIAGNOSTICS_COLLECT_DIR, "osd_info-metadata")
+    )
 
 def ls_by_osd(osd_ids):
     pg_dump = get_pg_dump()
@@ -137,12 +142,12 @@ def scrub_stats():
             num_objects_sum += pg['stat_sum']['num_objects']
             num_bytes_sum += pg['stat_sum']['num_bytes']
             pool = pg['pgid'].split('.')[0]
-            
+
             # Initialize pool lists if not exists
             if pool not in pool_durations:
                 pool_durations[pool] = []
             pool_durations[pool].append(duration)
-            
+
             num[pool] = num.get(pool, 0) + 1
             scrub_duration_sum_pool[pool] = scrub_duration_sum_pool.get(pool, 0) + duration
             num_objects_sum_pool[pool] = num_objects_sum_pool.get(pool, 0) + pg['stat_sum']['num_objects']
@@ -160,7 +165,7 @@ def scrub_stats():
         pool_std_dev = 0.0
         if len(pool_durations[pool]) > 1:  # Need at least 2 values for std dev
             pool_std_dev = statistics.stdev(pool_durations[pool])
-            
+
         print("  %s: %d sec (%d pgs, %d sec/pg, %d bytes/pg, %d obj/pg, %.2f sec std_dev)" %
               (pool, scrub_duration_sum_pool[pool], num[pool],
                scrub_duration_sum_pool[pool] / num[pool],

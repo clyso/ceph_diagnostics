@@ -6,6 +6,11 @@ import os
 import re
 import sys
 
+sys.path.append(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from common import json_load
+
+
 #
 # Global
 #
@@ -98,10 +103,12 @@ def main():
         if args.daemon and \
            args.daemon not in (daemon_type, f'{daemon_type}.*', daemon):
             continue
-        try:
-            with open(CEPH_DIAGNOSTICS_COLLECT_DIR + '/' + fname, 'r') as f:
-                perf[daemon] = json.load(f)
-        except:
+        perf[daemon] = json_load(
+            os.path.join(CEPH_DIAGNOSTICS_COLLECT_DIR, fname),
+            exit_on_error=False
+        )
+        if not perf[daemon]:
+            del perf[daemon]
             continue
 
     if args.cmd == 'daemons':

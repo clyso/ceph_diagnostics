@@ -431,10 +431,12 @@ get_orch_info() {
 
     info "collecting orchestrator info ..."
 
-    store    ${t}-status  ${CEPH} orch status
-    store    ${t}-ls      ${CEPH} orch ls
-    store -S ${t}-ls_yaml ${CEPH} orch ls --format yaml
-    store    ${t}-ps      ${CEPH} orch ps
+    store    ${t}-status        ${CEPH} orch status
+    store    ${t}-ls            ${CEPH} orch ls
+    store -s ${t}-ls-export     ${CEPH} orch ls --export
+    store -S ${t}-ls_yaml       ${CEPH} orch ls --format yaml
+    store    ${t}-ps            ${CEPH} orch ps
+    store    ${t}-host          ${CEPH} host ls
 }
 
 archive_result() {

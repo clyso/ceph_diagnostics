@@ -10,6 +10,7 @@ CEPH_CONFIG_FILE="${CEPH_CONFIG_FILE:-/etc/ceph/ceph.conf}"
 CEPH_TIMEOUT="${CEPH_TIMEOUT:-10}"
 QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
+RADOSGW_ADMIN_TIMEOUT="${RADOSGW_ADMIN_TIMEOUT:-60}"
 VERBOSE="${VERBOSE:-N}"
 COLLECT_ALL_OSD_ASOK_STATS="${COLLECT_ALL_OSD_ASOK_STATS:-N}"
 RESET_MDS_PERF_AND_SLEEP="${RESET_MDS_PERF_AND_SLEEP:-0}"
@@ -32,7 +33,8 @@ usage()
     echo "  -c | --ceph-config-file <file>         ceph configuration file"
     echo "  -q | --query-inactive-pg               query inactive pg"
     echo "  -r | --results-dir <dir>               directory to store result"
-    echo "  -t | --timeout <seconds>               timeout for ceph operations"
+    echo "  -t | --timeout <sec>                   timeout for ceph operations"
+    echo "  -T | --radosgw-admin-timeout <sec>     timeout radosgw-admin operations"
     echo "  -u | --uncensored                      don't hide sensitive data"
     echo "  -v | --verbose                         be verbose"
     echo "  -a | --all-osd-asok-stats              get data via admin socket (tell)"
@@ -482,7 +484,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o ac:hqr:t:uvD:G:M:O:V --long all-osd-asok-stats,ceph-config-file:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,version -- "$@")
+OPTIONS=$(getopt -o ac:hqr:t:uvD:G:M:O:T:V --long all-osd-asok-stats,ceph-config-file:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -513,6 +515,10 @@ while true; do
             ;;
         -t|--timeout)
             CEPH_TIMEOUT="$2"
+            shift 2
+            ;;
+        -T|--radosgw-admin-timeout)
+            RADOSGW_ADMIN_TIMEOUT="$2"
             shift 2
             ;;
         -u|--uncensored)
@@ -576,7 +582,7 @@ if `which timeout > /dev/null 2>&1`; then
         verbose_opt=-v
     fi
     CEPH="timeout ${verbose_opt} $((CEPH_TIMEOUT * 2)) ${CEPH}"
-    RADOSGW_ADMIN="timeout ${verbose_opt} $((CEPH_TIMEOUT * 2)) ${RADOSGW_ADMIN}"
+    RADOSGW_ADMIN="timeout ${verbose_opt} ${RADOSGW_ADMIN_TIMEOUT} ${RADOSGW_ADMIN}"
 fi
 
 if [ -n "${RESULTS_DIR}" ]; then

@@ -299,6 +299,7 @@ get_osd_info() {
     store -s ${t}-map       ${CEPH} osd getmap
     store -s ${t}-metadata  ${CEPH} osd metadata
     store    ${t}-perf      ${CEPH} osd perf
+    get_ec_profile_km_values ${t}
 
     show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
 
@@ -323,7 +324,7 @@ get_osd_info() {
         END {
             if (!a) {
                 for (c in o) print o[c]
-             }
+            }
         }' |
     while read osd; do
         store -s ${t}-${osd}-cache_status            ${CEPH} tell ${osd} cache status
@@ -439,6 +440,36 @@ get_orch_info() {
     store -S ${t}-ls_yaml ${CEPH} orch ls --format yaml
     store    ${t}-ps ${CEPH} orch ps
     store    ${t}-host ${CEPH} host ls
+}
+
+get_ec_profile_km_values() {
+    local prefix="$1"
+    local output_file="${RESULTS_DIR}/${prefix}-ec-profiles.json"
+    info "Collecting erasure code profiles and k/m values ..."
+
+    profiles=$(ceph osd dump -f json |
+        jq -r '.pools[].erasure_code_profile' |
+        grep -v '^$' | sort -u)
+
+    if [ -z "$profiles" ]; then
+        info "No erasure code profiles found."
+        echo "{}" > "$output_file"
+        return
+    fi
+
+    echo "{}" | jq '.' > "$output_file"
+
+    for profile in $profiles; do
+        info "Profile: $profile"
+
+        ec_profile_json=$(ceph osd erasure-code-profile get "$profile" -f json)
+
+        km_output=$(echo "$ec_profile_json" |
+            jq --arg profile "$profile" '{k: (.k | tonumber), m: (.m | tonumber)}')
+
+        jq --arg profile "$profile" --argjson km "$km_output" '. + {($profile): $km}' "$output_file" > "${output_file}.tmp"
+        mv "${output_file}.tmp" "$output_file"
+    done
 }
 
 archive_result() {

@@ -73,7 +73,7 @@ censor_config_json() {
         return
     fi
 
-    "$@" | jq 'map(if (.name | test("ACCESS_KEY|SECRET_KEY|PASSWORD"))
+    "$@" | jq 'map(if (.name | test("ACCESS_KEY|SECRET_KEY|PASSWORD"; "i"))
                    then .value = "'"${CENSORED}"'"
                    else . end)'
 }
@@ -86,7 +86,7 @@ censor_config_log_json() {
 
     "$@" | jq 'map(
                 .changes |= map(
-                  if (.name | test("ACCESS_KEY|SECRET_KEY|PASSWORD"))
+                  if (.name | test("ACCESS_KEY|SECRET_KEY|PASSWORD"; "i"))
                   then
                     .previous_value = "'"${CENSORED}"'"
                    |.new_value = "'"${CENSORED}"'"

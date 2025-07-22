@@ -438,7 +438,7 @@ get_orch_info() {
     store -s ${t}-ls-export ${CEPH} orch ls --export
     store -S ${t}-ls_yaml ${CEPH} orch ls --format yaml
     store    ${t}-ps ${CEPH} orch ps
-    store    ${t}-host ${CEPH} host ls
+    store    ${t}-host ${CEPH} orch host ls
 }
 
 archive_result() {

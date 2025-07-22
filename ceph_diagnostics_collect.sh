@@ -335,18 +335,19 @@ get_osd_info() {
         sleep ${RESET_OSD_PERF_AND_SLEEP}
     fi
 
-    store_tell -s "${osds}" ${t} cache_status            cache status
-    store_tell -s "${osds}" ${t} config_diff             config diff
-    store_tell -s "${osds}" ${t} config_show             config show
-    store_tell -s "${osds}" ${t} dump_historic_ops       dump_historic_ops
-    store_tell -s "${osds}" ${t} dump_historic_slow_ops  dump_historic_slow_ops
-    store_tell -s "${osds}" ${t} dump_mempools           dump_mempools
-    store_tell -s "${osds}" ${t} dump_ops_in_flight      dump_ops_in_flight
-    store_tell -s "${osds}" ${t} dump_osd_network        dump_osd_network
-    store_tell -s "${osds}" ${t} dump_scrub_reservations dump_scrub_reservations
-    store_tell -s "${osds}" ${t} dump_scrubs             dump_scrubs
-    store_tell -s "${osds}" ${t} perf_dump               perf dump
-    store_tell -s "${osds}" ${t} status                  status
+    store_tell -s "${osds}" ${t} cache_status                      cache status
+    store_tell -s "${osds}" ${t} config_diff                       config diff
+    store_tell -s "${osds}" ${t} config_show                       config show
+    store_tell -s "${osds}" ${t} dump_historic_ops                 dump_historic_ops
+    store_tell -s "${osds}" ${t} dump_historic_slow_ops            dump_historic_slow_ops
+    store_tell -s "${osds}" ${t} dump_mempools                     dump_mempools
+    store_tell -s "${osds}" ${t} dump_ops_in_flight                dump_ops_in_flight
+    store_tell -s "${osds}" ${t} dump_osd_network                  dump_osd_network
+    store_tell -s "${osds}" ${t} dump_scrub_reservations           dump_scrub_reservations
+    store_tell -s "${osds}" ${t} dump_scrubs                       dump_scrubs
+    store_tell -s "${osds}" ${t} perf_dump                         perf dump
+    store_tell -s "${osds}" ${t} status                            status
+    store_tell -s "${osds}" ${t} bluestore_allocator_fragmentation bluestore allocator fragmentation block
 }
 
 get_pg_info() {

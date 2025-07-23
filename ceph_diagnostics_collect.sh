@@ -12,7 +12,7 @@ QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
 RADOSGW_ADMIN_TIMEOUT="${RADOSGW_ADMIN_TIMEOUT:-60}"
 VERBOSE="${VERBOSE:-N}"
-COLLECT_ALL_OSD_ASOK_STATS="${COLLECT_ALL_OSD_ASOK_STATS:-N}"
+COLLECT_ALL_OSD_ASOK_STATS="${COLLECT_ALL_OSD_ASOK_STATS:-Y}"
 RESET_MDS_PERF_AND_SLEEP="${RESET_MDS_PERF_AND_SLEEP:-0}"
 RESET_MGR_PERF_AND_SLEEP="${RESET_MGR_PERF_AND_SLEEP:-0}"
 RESET_MON_PERF_AND_SLEEP="${RESET_MON_PERF_AND_SLEEP:-0}"
@@ -37,8 +37,8 @@ usage()
     echo "  -T | --radosgw-admin-timeout <sec>     timeout radosgw-admin operations"
     echo "  -u | --uncensored                      don't hide sensitive data"
     echo "  -v | --verbose                         be verbose"
-    echo "  -a | --all-osd-asok-stats              get data via admin socket (tell)"
-    echo "                                         for all osds"
+    echo "  -o | --one-osd-asok-stats              get data via admin socket (tell)"
+    echo "                                         only for one osd"
     echo "  -D | --mds-perf-reset-and-sleep <sec>  reset mds perf counters and sleep"
     echo "  -G | --mgr-perf-reset-and-sleep <sec>  reset mgr perf counters and sleep"
     echo "  -M | --mon-perf-reset-and-sleep <sec>  reset mon perf counters and sleep"
@@ -496,7 +496,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o ac:hqr:t:uvD:G:M:O:T:V --long all-osd-asok-stats,ceph-config-file:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
+OPTIONS=$(getopt -o c:hoqr:t:uvD:G:M:O:T:V --long ceph-config-file:,help,one-osd-asok-stats,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -513,7 +513,7 @@ while true; do
             CEPH_CONFIG_FILE="$2"
             shift 2
             ;;
-        -a|--all-osd-asok-stats)
+        -o|--one-osd-asok-stats)
             COLLECT_ALL_OSD_ASOK_STATS=Y
             shift
             ;;

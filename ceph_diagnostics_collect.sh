@@ -156,6 +156,19 @@ store() {
     fi
 }
 
+store_tell() {
+    local opt="$1"; shift
+    local daemons="$1"; shift
+    local t="$1"; shift
+    local name="$1"; shift
+    local d
+
+    for d in ${daemons}; do
+	store ${opt} ${t}-${d}-${name} ${CEPH} tell ${d} "$@" &
+    done
+    wait
+}
+
 show_stored() {
     local name="$1"
 
@@ -219,6 +232,7 @@ get_health_info() {
 
 get_monitor_info() {
     local t=monitor_info
+    local mons
 
     info "collecting monitor info ..."
 
@@ -227,25 +241,23 @@ get_monitor_info() {
     store -s ${t}-map      ${CEPH} mon getmap
     store -s ${t}-metadata ${CEPH} mon metadata
 
+    mons=$(show_stored ${t}-dump | sed -nEe 's/^.* (mon\..*)$/\1/p')
+
     if [ "${RESET_MON_PERF_AND_SLEEP}" -gt 0 ]; then
-        store -S ${t}-perf_reset ${CEPH} tell mon.\* perf reset all
+        store_tell -S "${mons}" ${t} perf_reset perf reset all
         info "sleeping for ${RESET_MON_PERF_AND_SLEEP} sec after reseting mon perf counters ..."
         sleep ${RESET_MON_PERF_AND_SLEEP}
     fi
 
-    show_stored ${t}-dump |
-    sed -nEe 's/^.* (mon\..*)$/\1/p' |
-    while read mon; do
-        store -s ${t}-${mon}-config_diff            ${CEPH} tell ${mon} config diff
-        store -s ${t}-${mon}-config_show            ${CEPH} tell ${mon} config show
-        store -s ${t}-${mon}-dump_historic_ops      ${CEPH} tell ${mon} dump_historic_ops
-        store -s ${t}-${mon}-dump_historic_slow_ops ${CEPH} tell ${mon} dump_historic_slow_ops
-        store -s ${t}-${mon}-dump_mempools          ${CEPH} tell ${mon} dump_mempools
-        store -s ${t}-${mon}-mon_status             ${CEPH} tell ${mon} mon_status
-        store -s ${t}-${mon}-ops                    ${CEPH} tell ${mon} ops
-        store -s ${t}-${mon}-perf_dump              ${CEPH} tell ${mon} perf dump
-        store -s ${t}-${mon}-sessions               ${CEPH} tell ${mon} sessions
-    done
+    store_tell -s "${mons}" ${t} config_diff            config diff
+    store_tell -s "${mons}" ${t} config_show            config show
+    store_tell -s "${mons}" ${t} dump_historic_ops      dump_historic_ops
+    store_tell -s "${mons}" ${t} dump_historic_slow_ops dump_historic_slow_ops
+    store_tell -s "${mons}" ${t} dump_mempools          dump_mempools
+    store_tell -s "${mons}" ${t} mon_status             mon_status
+    store_tell -s "${mons}" ${t} ops                    ops
+    store_tell -s "${mons}" ${t} perf_dump              perf dump
+    store_tell -s "${mons}" ${t} sessions               sessions
 }
 
 get_device_info() {
@@ -258,6 +270,7 @@ get_device_info() {
 
 get_manager_info() {
     local t=manager_info
+    local mgrs
 
     info "collecting manager info ..."
 
@@ -265,28 +278,28 @@ get_manager_info() {
     store -s ${t}-dump    ${CEPH} mgr dump
     store -s ${t}-metadata   ${CEPH} mgr metadata
 
+    mgrs=$(show_stored ${t}-dump |
+           sed -nEe 's/^.*"active_name": "([^"]*)".*$/mgr.\1/p')
+
     if [ "${RESET_MGR_PERF_AND_SLEEP}" -gt 0 ]; then
-        store -S ${t}-perf_reset ${CEPH} tell mgr.\* perf reset all
+        store_tell -S "${mgrs}" ${t} perf_reset perf reset all
         info "sleeping for ${RESET_MGR_PERF_AND_SLEEP} sec after reseting mgr perf counters ..."
         sleep ${RESET_MGR_PERF_AND_SLEEP}
     fi
 
-    show_stored ${t}-dump |
-    sed -nEe 's/^.*"active_name": "([^"]*)".*$/mgr.\1/p' |
-    while read mgr; do
-        store -s ${t}-${mgr}-mds_requests  ${CEPH} tell ${mgr} mds_requests
-        store -s ${t}-${mgr}-config_diff   ${CEPH} tell ${mgr} config diff
-        store -s ${t}-${mgr}-config_show   ${CEPH} tell ${mgr} config show
-        store -s ${t}-${mgr}-dump_cache    ${CEPH} tell ${mgr} dump_cache
-        store -s ${t}-${mgr}-dump_mempools ${CEPH} tell ${mgr} dump_mempools
-        store -s ${t}-${mgr}-mgr_status    ${CEPH} tell ${mgr} mgr_status
-        store -s ${t}-${mgr}-perf_dump     ${CEPH} tell ${mgr} perf dump
-        store -s ${t}-${mgr}-status        ${CEPH} tell ${mgr} status
-    done
+    store_tell -s "${mgrs}" ${t} mds_requests  mds_requests
+    store_tell -s "${mgrs}" ${t} config_diff   config diff
+    store_tell -s "${mgrs}" ${t} config_show   config show
+    store_tell -s "${mgrs}" ${t} dump_cache    dump_cache
+    store_tell -s "${mgrs}" ${t} dump_mempools dump_mempools
+    store_tell -s "${mgrs}" ${t} mgr_status    mgr_status
+    store_tell -s "${mgrs}" ${t} perf_dump     perf dump
+    store_tell -s "${mgrs}" ${t} status        status
 }
 
 get_osd_info() {
     local t=osd_info
+    local osds
 
     info "collecting osd info ..."
 
@@ -302,12 +315,6 @@ get_osd_info() {
 
     show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
 
-    if [ "${RESET_OSD_PERF_AND_SLEEP}" -gt 0 ]; then
-        store -S ${t}-perf_reset ${CEPH} tell osd.\* perf reset all
-        info "sleeping for ${RESET_OSD_PERF_AND_SLEEP} sec after reseting osd perf counters ..."
-        sleep ${RESET_OSD_PERF_AND_SLEEP}
-    fi
-
     # Sort osds by weight and collect stats for one of every class
     # with highest weight, unless COLLECT_ALL_OSD_ASOK_STATS is set,
     # in which case stats for all osds are collected.
@@ -315,30 +322,36 @@ get_osd_info() {
     #
     #   99    ssd     0.21799          osd.99               up   1.00000  1.00000
     #
-    show_stored ${t}-tree | sort -n -k 3 |
-    awk -v a=$(test "${COLLECT_ALL_OSD_ASOK_STATS}" = Y && echo 1) '
-        $5 == "up" && $6 > 0.8 {
-            if (a) {print $4} else {o[$2] = $4}
-        }
-        END {
-            if (!a) {
-                for (c in o) print o[c]
-             }
-        }' |
-    while read osd; do
-        store -s ${t}-${osd}-cache_status            ${CEPH} tell ${osd} cache status
-        store -s ${t}-${osd}-config_diff             ${CEPH} tell ${osd} config diff
-        store -s ${t}-${osd}-config_show             ${CEPH} tell ${osd} config show
-        store -s ${t}-${osd}-dump_historic_ops       ${CEPH} tell ${osd} dump_historic_ops
-        store -s ${t}-${osd}-dump_historic_slow_ops  ${CEPH} tell ${osd} dump_historic_slow_ops
-        store -s ${t}-${osd}-dump_mempools           ${CEPH} tell ${osd} dump_mempools
-        store -s ${t}-${osd}-dump_ops_in_flight      ${CEPH} tell ${osd} dump_ops_in_flight
-        store -s ${t}-${osd}-dump_osd_network        ${CEPH} tell ${osd} dump_osd_network
-        store -s ${t}-${osd}-dump_scrub_reservations ${CEPH} tell ${osd} dump_scrub_reservations
-        store -s ${t}-${osd}-dump_scrubs             ${CEPH} tell ${osd} dump_scrubs
-        store -s ${t}-${osd}-perf_dump               ${CEPH} tell ${osd} perf dump
-        store -s ${t}-${osd}-status                  ${CEPH} tell ${osd} status
-    done
+    osds=$(show_stored ${t}-tree | sort -n -k 3 |
+           awk -v a=$(test "${COLLECT_ALL_OSD_ASOK_STATS}" = Y && echo 1) '
+               $5 == "up" && $6 > 0.8 {
+                   if (a) {print $4} else {o[$2] = $4}
+               }
+               END {
+                   if (!a) {
+                       for (c in o) print o[c]
+                    }
+               }'
+         )
+
+    if [ "${RESET_OSD_PERF_AND_SLEEP}" -gt 0 ]; then
+        store_tell -S "${osds}" ${t} perf_reset perf reset all
+        info "sleeping for ${RESET_OSD_PERF_AND_SLEEP} sec after reseting osd perf counters ..."
+        sleep ${RESET_OSD_PERF_AND_SLEEP}
+    fi
+
+    store_tell -s "${osds}" ${t} cache_status            cache status
+    store_tell -s "${osds}" ${t} config_diff             config diff
+    store_tell -s "${osds}" ${t} config_show             config show
+    store_tell -s "${osds}" ${t} dump_historic_ops       dump_historic_ops
+    store_tell -s "${osds}" ${t} dump_historic_slow_ops  dump_historic_slow_ops
+    store_tell -s "${osds}" ${t} dump_mempools           dump_mempools
+    store_tell -s "${osds}" ${t} dump_ops_in_flight      dump_ops_in_flight
+    store_tell -s "${osds}" ${t} dump_osd_network        dump_osd_network
+    store_tell -s "${osds}" ${t} dump_scrub_reservations dump_scrub_reservations
+    store_tell -s "${osds}" ${t} dump_scrubs             dump_scrubs
+    store_tell -s "${osds}" ${t} perf_dump               perf dump
+    store_tell -s "${osds}" ${t} status                  status
 }
 
 get_pg_info() {
@@ -371,7 +384,7 @@ get_mds_info() {
 
 get_fs_info() {
     local t=fs_info
-    local mds
+    local mdss
 
     info "collecting fs info ..."
 
@@ -379,29 +392,28 @@ get_fs_info() {
     store ${t}-status ${CEPH} fs status
     store ${t}-dump   ${CEPH} fs dump
 
+    mdss=$(show_stored ${t}-dump |
+           sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p')
+
     if [ "${RESET_MDS_PERF_AND_SLEEP}" -gt 0 ]; then
-        store -S ${t}-perf_reset ${CEPH} tell mds.\* perf reset all
+        store_tell -S "${mdss}" ${t} perf_reset perf reset all
         info "sleeping for ${RESET_MDS_PERF_AND_SLEEP} sec after reseting mds perf counters ..."
         sleep ${RESET_MDS_PERF_AND_SLEEP}
     fi
 
-    show_stored ${t}-dump |
-    sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p' |
-    while read mds; do
-        store -s ${t}-${mds}-cache_status       ${CEPH} tell ${mds} cache status
-        store -s ${t}-${mds}-dump_historic_ops  ${CEPH} tell ${mds} dump_historic_ops
-        store -s ${t}-${mds}-dump_loads         ${CEPH} tell ${mds} dump loads
-        store -s ${t}-${mds}-dump_mempools      ${CEPH} tell ${mds} dump_mempools
-        store -s ${t}-${mds}-dump_ops_in_flight ${CEPH} tell ${mds} dump_ops_in_flight
-        store -s ${t}-${mds}-perf_dump          ${CEPH} tell ${mds} perf dump
-        store -s ${t}-${mds}-scrub_status       ${CEPH} tell ${mds} scrub status
-        store -s ${t}-${mds}-session_ls         ${CEPH} tell ${mds} session ls
-        store -s ${t}-${mds}-status             ${CEPH} tell ${mds} status
-        store -s ${t}-${mds}-config_diff        ${CEPH} tell ${mds} config diff
-        store -s ${t}-${mds}-config_show        ${CEPH} tell ${mds} config show
-        store -s ${t}-${mds}-damage_ls          ${CEPH} tell ${mds} damage ls
-        store -s ${t}-${mds}-dump_blocked_ops   ${CEPH} tell ${mds} dump_blocked_ops
-    done
+    store_tell -s "${mdss}" ${t} cache_status       cache status
+    store_tell -s "${mdss}" ${t} dump_historic_ops  dump_historic_ops
+    store_tell -s "${mdss}" ${t} dump_loads         dump loads
+    store_tell -s "${mdss}" ${t} dump_mempools      dump_mempools
+    store_tell -s "${mdss}" ${t} dump_ops_in_flight dump_ops_in_flight
+    store_tell -s "${mdss}" ${t} perf_dump          perf dump
+    store_tell -s "${mdss}" ${t} scrub_status       scrub status
+    store_tell -s "${mdss}" ${t} session_ls         session ls
+    store_tell -s "${mdss}" ${t} status             status
+    store_tell -s "${mdss}" ${t} config_diff        config diff
+    store_tell -s "${mdss}" ${t} config_show        config show
+    store_tell -s "${mdss}" ${t} damage_ls          damage ls
+    store_tell -s "${mdss}" ${t} dump_blocked_ops   dump_blocked_ops
 }
 
 get_radosgw_admin_info() {

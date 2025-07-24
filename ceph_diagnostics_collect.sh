@@ -12,7 +12,7 @@ QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
 RADOSGW_ADMIN_TIMEOUT="${RADOSGW_ADMIN_TIMEOUT:-60}"
 VERBOSE="${VERBOSE:-N}"
-COLLECT_ALL_OSD_ASOK_STATS="${COLLECT_ALL_OSD_ASOK_STATS:-Y}"
+ASOK_STATS_MAX_OSDS="${ASOK_STATS_MAX_OSDS:-100}"
 RESET_MDS_PERF_AND_SLEEP="${RESET_MDS_PERF_AND_SLEEP:-0}"
 RESET_MGR_PERF_AND_SLEEP="${RESET_MGR_PERF_AND_SLEEP:-0}"
 RESET_MON_PERF_AND_SLEEP="${RESET_MON_PERF_AND_SLEEP:-0}"
@@ -37,8 +37,8 @@ usage()
     echo "  -T | --radosgw-admin-timeout <sec>     timeout radosgw-admin operations"
     echo "  -u | --uncensored                      don't hide sensitive data"
     echo "  -v | --verbose                         be verbose"
-    echo "  -o | --one-osd-asok-stats              get data via admin socket (tell)"
-    echo "                                         only for one osd"
+    echo "  -m | --asok-stats-max-osds <N>         get data via admin socket (tell) for"
+    echo "                                         not more than N osds (default ${ASOK_STATS_MAX_OSDS})"
     echo "  -D | --mds-perf-reset-and-sleep <sec>  reset mds perf counters and sleep"
     echo "  -G | --mgr-perf-reset-and-sleep <sec>  reset mgr perf counters and sleep"
     echo "  -M | --mon-perf-reset-and-sleep <sec>  reset mon perf counters and sleep"
@@ -315,22 +315,17 @@ get_osd_info() {
 
     show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
 
-    # Sort osds by weight and collect stats for one of every class
-    # with highest weight, unless COLLECT_ALL_OSD_ASOK_STATS is set,
-    # in which case stats for all osds are collected.
+    # Sort osds by weight and collect stats for up to ASOK_STATS_MAX_OSDS
+    # of every class with highest weight.
     # The sort and awk commands below parse lines like this:
     #
     #   99    ssd     0.21799          osd.99               up   1.00000  1.00000
     #
-    osds=$(show_stored ${t}-tree | sort -n -k 3 |
-           awk -v a=$(test "${COLLECT_ALL_OSD_ASOK_STATS}" = Y && echo 1) '
-               $5 == "up" && $6 > 0.8 {
-                   if (a) {print $4} else {o[$2] = $4}
-               }
-               END {
-                   if (!a) {
-                       for (c in o) print o[c]
-                    }
+    osds=$(show_stored ${t}-tree | sort -nrk 3 |
+           awk -v max_osds=${ASOK_STATS_MAX_OSDS} '
+               n[$2] < max_osds && $5 == "up" && $6 > 0.1 {
+                   print $4;
+                   n[$2]++;
                }'
          )
 
@@ -496,7 +491,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o c:hoqr:t:uvD:G:M:O:T:V --long ceph-config-file:,help,one-osd-asok-stats,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
+OPTIONS=$(getopt -o c:hm:qr:t:uvD:G:M:O:T:V --long asok-stats-max-osds:,ceph-config-file:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -513,9 +508,9 @@ while true; do
             CEPH_CONFIG_FILE="$2"
             shift 2
             ;;
-        -o|--one-osd-asok-stats)
-            COLLECT_ALL_OSD_ASOK_STATS=Y
-            shift
+        -m|--asok-stats-max-osds)
+            ASOK_STATS_MAX_OSDS="$2"
+            shift 2
             ;;
         -q|--query-inactive-pg)
             QUERY_INACTIVE_PG=Y

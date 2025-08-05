@@ -210,7 +210,7 @@ case "$cmd" in
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-versions"
         ;;
     "crash info"*)
-	id=$(echo $cmd | sed -Ee 's/crash info //; s/:/_/g;')
+	id=$(echo $cmd | sed -Ee 's/^crash info *//')
 	if [ -z "$id" ]; then
 	    echo "crash info expects <crash_id> argument" >&2
 	    exit 1

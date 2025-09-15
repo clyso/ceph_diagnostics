@@ -13,6 +13,7 @@ RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
 RADOSGW_ADMIN_TIMEOUT="${RADOSGW_ADMIN_TIMEOUT:-60}"
 VERBOSE="${VERBOSE:-N}"
 ASOK_STATS_MAX_OSDS="${ASOK_STATS_MAX_OSDS:-100}"
+CRASH_LAST_DAYS="${CRASH_LAST_DAYS:-10}"
 RESET_MDS_PERF_AND_SLEEP="${RESET_MDS_PERF_AND_SLEEP:-0}"
 RESET_MGR_PERF_AND_SLEEP="${RESET_MGR_PERF_AND_SLEEP:-0}"
 RESET_MON_PERF_AND_SLEEP="${RESET_MON_PERF_AND_SLEEP:-0}"
@@ -29,20 +30,21 @@ usage()
     echo
     echo "Options:"
     echo
-    echo "  -h | --help                            print this help and exit"
     echo "  -c | --ceph-config-file <file>         ceph configuration file"
+    echo "  -h | --help                            print this help and exit"
+    echo "  -m | --asok-stats-max-osds <N>         get data via admin socket (tell) for"
+    echo "                                         not more than N osds (default ${ASOK_STATS_MAX_OSDS})"
     echo "  -q | --query-inactive-pg               query inactive pg"
     echo "  -r | --results-dir <dir>               directory to store result"
     echo "  -t | --timeout <sec>                   timeout for ceph operations"
-    echo "  -T | --radosgw-admin-timeout <sec>     timeout radosgw-admin operations"
     echo "  -u | --uncensored                      don't hide sensitive data"
     echo "  -v | --verbose                         be verbose"
-    echo "  -m | --asok-stats-max-osds <N>         get data via admin socket (tell) for"
-    echo "                                         not more than N osds (default ${ASOK_STATS_MAX_OSDS})"
+    echo "  -C | --crash-last-days <days>          number of days to look for crash logs"
     echo "  -D | --mds-perf-reset-and-sleep <sec>  reset mds perf counters and sleep"
     echo "  -G | --mgr-perf-reset-and-sleep <sec>  reset mgr perf counters and sleep"
     echo "  -M | --mon-perf-reset-and-sleep <sec>  reset mon perf counters and sleep"
     echo "  -O | --osd-perf-reset-and-sleep <sec>  reset osd perf counters and sleep"
+    echo "  -T | --radosgw-admin-timeout <sec>     timeout radosgw-admin operations"
     echo
 }
 
@@ -212,7 +214,7 @@ get_ceph_info() {
 
 get_health_info() {
     local t=cluster_health
-    local id
+    local id oldest
 
     info "collecting cluster health info ..."
 
@@ -224,8 +226,14 @@ get_health_info() {
     store    ${t}-crash_ls        ${CEPH} crash ls
     store    ${t}-balancer-status ${CEPH} balancer status
 
+    if [ "${CRASH_LAST_DAYS}" -gt 0 ]; then
+        oldest=$(date -d "-${CRASH_LAST_DAYS} days" +%F)
+    else
+        oldest=''
+    fi
     show_stored ${t}-crash_ls | grep -o '^[0-9][^ ]*' |
     while read id; do
+        test "${id}" '<' "${oldest}" && continue
         store -s ${t}-crash_info_${id} ${CEPH} crash info ${id}
     done
 }
@@ -491,7 +499,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o c:hm:qr:t:uvD:G:M:O:T:V --long asok-stats-max-osds:,ceph-config-file:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
+OPTIONS=$(getopt -o c:hm:qr:t:uvC:D:G:M:O:T:V --long asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -524,10 +532,6 @@ while true; do
             CEPH_TIMEOUT="$2"
             shift 2
             ;;
-        -T|--radosgw-admin-timeout)
-            RADOSGW_ADMIN_TIMEOUT="$2"
-            shift 2
-            ;;
         -u|--uncensored)
             CENSORED=
             shift
@@ -536,6 +540,10 @@ while true; do
             VERBOSE=Y
             shift
             ;;
+	-C|--crash-last-days)
+	    CRASH_LAST_DAYS="$2"
+	    shift 2
+	    ;;
         -D|--mds-perf-reset-and-sleep)
             RESET_MDS_PERF_AND_SLEEP="$2"
             shift 2
@@ -550,6 +558,10 @@ while true; do
             ;;
         -O|--osd-perf-reset-and-sleep)
             RESET_OSD_PERF_AND_SLEEP="$2"
+            shift 2
+            ;;
+        -T|--radosgw-admin-timeout)
+            RADOSGW_ADMIN_TIMEOUT="$2"
             shift 2
             ;;
 	-V|--version)

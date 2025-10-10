@@ -32,6 +32,19 @@ help() {
         local description="$(${CDS_COMMANDS_DIR}/${cmd} description)"
         printf "  %-${max_len}s  %s\n" "${cmd}" "${description}"
     done
+
+    if [ -z "${CEPH_DIAGNOSTICS_COLLECT_DIR}" ] || \
+	   ! [ -d "${CEPH_DIAGNOSTICS_COLLECT_DIR}/COMMANDS" ]; then
+        return
+    fi
+
+    echo ''
+    echo "Ceph Diagnostics Collect directory: ${CEPH_DIAGNOSTICS_COLLECT_DIR}"
+    echo ''
+    echo 'You may also run `cds <collected command>` for collected commands:'
+    echo ''
+    ls -1 "${CEPH_DIAGNOSTICS_COLLECT_DIR}/COMMANDS" | sed -e 's/^/  /'
+    echo ''
 }
 
 set_ceph_diagnostics_collect_dir() {
@@ -62,24 +75,23 @@ set_ceph_diagnostics_collect_dir() {
 }
 
 run_cmd() {
-    local orig_cmd=$1 cmd=$1
+    local orig_cmd=$1 cmd=$1 orig_args="$@"
     shift
 
+    if cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/COMMANDS/${orig_args}" 2>/dev/null
+    then
+        exit 0
+    fi
+
     while ! test -x ${CDS_COMMANDS_DIR}/${cmd}; do
-        test -z "$@" && break
+        test -z "$1" && break
         cmd=${cmd}-$1
         shift
     done
 
     if ! test -x ${CDS_COMMANDS_DIR}/${cmd}; then
-        echo "unknown command: ${orig_cmd}" >&2
-        exit 1
-    fi
-
-    if [ "$1" = help ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        set_ceph_diagnostics_collect_dir --allow-missing
-    else
-        set_ceph_diagnostics_collect_dir
+	echo "unknown command: ${orig_cmd}" >&2
+	exit 1
     fi
 
     ${CDS_COMMANDS_DIR}/${cmd} $@
@@ -94,8 +106,10 @@ if [ -z "$1" ] || [ "$1" = help ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; the
     if [ "$1" = help ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
         shift
     fi
+    set_ceph_diagnostics_collect_dir --allow-missing
     help $@
 else
+    set_ceph_diagnostics_collect_dir
     run_cmd $@
 fi
 

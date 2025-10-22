@@ -116,9 +116,21 @@ censor_auth_json() {
     "$@" | jq '.auth_dump |= map(.key = "'"${CENSORED}"'")'
 }
 
+prettyfy_command() {
+    echo "$*" | sed -Ee 's/  +/ /g' \
+                    -Ee 's/--conf[= ][^ ]+ //g' \
+                    -Ee 's/--cluster[= ][^ ]+ //g' \
+                    -Ee 's/--connect-timeout[= ][^ ]+ //g' \
+                    -Ee 's/--timeout[= ][^ ]+ //g' \
+                    -Ee 's/timeout (-v:?)* *[0-9]+ //g' \
+		    -Ee 's/censor_[^ ]+ //g' \
+                    -Ee 's|/|_|g'
+}
+
 store() {
     local skip_json=0
     local json_file_compat=0
+    local cmd
 
     while true; do
         case "$1" in
@@ -156,6 +168,9 @@ store() {
     if [ $json_file_compat -eq 1 ]; then
         ln -sr "${RESULTS_DIR}/${name}.json" "${RESULTS_DIR}/${name}_json"
     fi
+
+    cmd=$(prettyfy_command "$@")
+    ln -sr "${RESULTS_DIR}/${name}" "${RESULTS_DIR}/COMMANDS/${cmd}"
 }
 
 store_tell() {
@@ -610,6 +625,7 @@ if [ -n "${RESULTS_DIR}" ]; then
 else
     RESULTS_DIR=$(mktemp -d /tmp/ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX)
 fi
+mkdir -p "${RESULTS_DIR}"/COMMANDS
 
 trap cleanup INT TERM EXIT
 

@@ -36,15 +36,15 @@ help() {
     echo "  orch ps"
     echo "  orch status"
     echo "  osd df tree"
-    echo "  osd df"
-    echo "  osd dump"
+    echo "  osd df [-f json]"
+    echo "  osd dump [-f json]"
     echo "  osd getcrushmap"
     echo "  osd getmap"
     echo "  osd metadata [<id>]"
     echo "  osd perf"
     echo "  osd pool ls detail"
-    echo "  osd tree"
-    echo "  pg dump [--format json]"
+    echo "  osd tree [-f json]"
+    echo "  pg dump [-f json|--format json]"
     echo "  pg dump_stuck"
     echo "  report"
     echo "  status"
@@ -298,11 +298,17 @@ case "$cmd" in
     "osd df")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-df"
         ;;
+    "osd df -f json")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-df.json"
+        ;;
     "osd df tree")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-df-tree"
         ;;
     "osd dump")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump"
+        ;;
+    "osd dump -f json")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump.json"
         ;;
     "osd getmap")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-map"
@@ -324,10 +330,13 @@ case "$cmd" in
     "osd tree")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-tree"
         ;;
+    "osd tree -f json")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-tree_json"
+        ;;
     "pg dump")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
         ;;
-    "pg dump --format json")
+    "pg dump -f json"|"pg dump --format json")
 	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json"
         ;;
     "pg dump_stuck")

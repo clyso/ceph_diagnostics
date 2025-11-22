@@ -1,6 +1,7 @@
 #!/bin/sh
 
-CLYSO_FSA="${CLYSO_FSA:-fsa}"
+CLYSO_FSA_DIR="${CLYSO_FSA_DIR:-$HOME/clyso/clyso-fsa}"
+CLYSO_FSA_CUSTOMER="${CLYSO_FSA_CUSTOMER:-CLYSO FSA CUSTOMER}"
 
 description() {
     echo "run fsa command"
@@ -9,17 +10,29 @@ description() {
 help() {
     description
     echo ""
-    echo "supported commands:"
-    echo ""
-    echo "  full"
+    echo "usage: fsa [customer name]"
     echo ""
 }
 
-full() {
-    local collect_dir="$1"
+fsa() {
+    if [ ! -d "${CLYSO_FSA_DIR}/.venv" ]; then
+        echo "cannot find fsa virtual environment ${CLYSO_FSA_DIR}/.venv" >&2
+        echo "fsa is not installed or CLYSO_CCT_DIR is not set correctly" >&2
+        exit 1
+    fi
 
-    eval ${CLYSO_FSA} full --markdown --customer '"<CLYSO FSA CUSTOMER>"' \
-	 --ceph-collect-dir "${collect_dir}"
+    local fsa_dir=$(mktemp -d)
+    trap "rm -rf ${fsa_dir}" EXIT
+    (cd ${fsa_dir} && ln -s "${CEPH_DIAGNOSTICS_COLLECT_DIR}")
+
+    local customer="${CLYSO_FSA_CUSTOMER}"
+    if [ -n "$1" ]; then
+        customer="$*"
+    fi
+
+    cd ${CLYSO_FSA_DIR}
+    source $HOME/clyso/clyso-fsa/.venv/bin/activate
+    python3 generate_fsa.py --fsa-dir "${fsa_dir}" --customer "${customer}"
 }
 
 cmd="$@"
@@ -33,11 +46,7 @@ case "$cmd" in
         help
         exit 0
         ;;
-    "full")
-	full "${CEPH_DIAGNOSTICS_COLLECT_DIR}"
-        ;;
     *)
-	echo "invalid or unsupported fsa command: $cmd" >&2
-        exit 1
+	fsa ${cmd}
         ;;
 esac

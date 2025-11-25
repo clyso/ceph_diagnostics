@@ -49,6 +49,8 @@ help() {
     echo "  pg dump_stuck"
     echo "  prometheus file_sd_config"
     echo "  report"
+    echo "  service dump"
+    echo "  service status"
     echo "  status"
     echo "  tell"
     echo "  version"
@@ -67,6 +69,10 @@ osd_metadata_filter() {
     else
         jq ".[]"
     fi
+}
+
+service_dump_filter() {
+    jq -r '.servicemap'
 }
 
  tell() {
@@ -350,6 +356,13 @@ case "$cmd" in
     "prometheus file_sd_config")
         file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/prometheus_info-file_sd_config"
         ;;
+    "service dump")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-report"
+	filter=service_dump_filter
+	;;
+    "service status")
+	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-service-status"
+	;;
     tell*)
         tell ${cmd#tell}
         exit 0

@@ -240,6 +240,7 @@ get_health_info() {
     store -s ${t}-report          ${CEPH} report
     store    ${t}-crash_ls        ${CEPH} crash ls
     store    ${t}-balancer-status ${CEPH} balancer status
+    store -s ${t}-service-status  ${CEPH} service status
 
     if [ "${CRASH_LAST_DAYS}" -gt 0 ]; then
         oldest=$(date -d "-${CRASH_LAST_DAYS} days" +%F)

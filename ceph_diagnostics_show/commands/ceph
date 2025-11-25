@@ -24,6 +24,7 @@ help() {
     echo "  fsid"
     echo "  health detail"
     echo "  health"
+    echo "  healthcheck history ls"
     echo "  mds metadata"
     echo "  mds stat"
     echo "  mgr dump"
@@ -46,6 +47,7 @@ help() {
     echo "  osd tree [-f json]"
     echo "  pg dump [-f json|--format json]"
     echo "  pg dump_stuck"
+    echo "  prometheus file_sd_config"
     echo "  report"
     echo "  status"
     echo "  tell"
@@ -61,9 +63,9 @@ osd_metadata_filter() {
     local id="$1"
 
     if [ -n "$id" ]; then
-	jq ".[] | select(.id == ${id})"
+        jq ".[] | select(.id == ${id})"
     else
-	jq ".[]"
+        jq ".[]"
     fi
 }
 
@@ -71,14 +73,14 @@ osd_metadata_filter() {
     local daemon="$1"
 
     if [ -z "$daemon" ]; then
-	echo "known daemons:"
+        echo "known daemons:"
         echo ""
         ls -1 ${CEPH_DIAGNOSTICS_COLLECT_DIR} |
         sed -nEe '
-	  s/^monitor_info-(mon\..*)-config_diff$/  \1/p;
-	  s/^manager_info-(mgr\..*)-config_diff$/  \1/p;
-	  s/^fs_info-(mds\..*)-config_diff$/  \1/p;
-	  s/^osd_info-(osd\..*)-config_diff$/  \1/p;
+          s/^monitor_info-(mon\..*)-config_diff$/  \1/p;
+          s/^manager_info-(mgr\..*)-config_diff$/  \1/p;
+          s/^fs_info-(mds\..*)-config_diff$/  \1/p;
+          s/^osd_info-(osd\..*)-config_diff$/  \1/p;
         '
         echo ""
         exit 0
@@ -186,168 +188,174 @@ case "$cmd" in
         exit 0
         ;;
     "auth list")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-auth_list"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-auth_list"
         ;;
     "balancer status")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-balancer-status"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-balancer-status"
         ;;
     "config dump")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-config_dump"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-config_dump"
         ;;
     "config log")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-config_log"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-config_log"
         ;;
     "fsid")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-fsid"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-fsid"
         ;;
     "status"|"-s")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-status"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-status"
         ;;
     "version")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-version"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-version"
         ;;
     "versions")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-versions"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/ceph_cluster_info-versions"
         ;;
     "crash info"*)
-	id=$(echo $cmd | sed -Ee 's/^crash info *//')
-	if [ -z "$id" ]; then
-	    echo "crash info expects <crash_id> argument" >&2
-	    exit 1
-	fi
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-crash_info_${id}"
+        id=$(echo $cmd | sed -Ee 's/^crash info *//')
+        if [ -z "$id" ]; then
+            echo "crash info expects <crash_id> argument" >&2
+            exit 1
+        fi
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-crash_info_${id}"
         ;;
     "crash ls")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-crash_ls"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-crash_ls"
         ;;
     "health detail")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-detail"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-detail"
         ;;
     "df")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-df"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-df"
         ;;
     "df detail")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-df-detail"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-df-detail"
         ;;
     "report")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-report"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-report"
         ;;
     "health")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-stat"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-stat"
         ;;
     "device ls")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/device_info-ls"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/device_info-ls"
         ;;
     "device ls --format json")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/device_info-ls_json"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/device_info-ls_json"
         ;;
     "fs dump")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-dump"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-dump"
         ;;
     "fs ls")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-ls"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-ls"
         ;;
     "fs status")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-status"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/fs_info-status"
         ;;
     "mgr dump")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-dump"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-dump"
         ;;
     "mgr ls modules")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-ls-modules"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-ls-modules"
         ;;
     "mgr ls modules")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-ls-modules"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-ls-modules"
         ;;
     "mgr metadata")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-metadata"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/manager_info-metadata"
         ;;
     "mds metadata")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/mds_info-metadata"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/mds_info-metadata"
         ;;
     "mds stat")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/mds_info-stat"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/mds_info-stat"
         ;;
     "mon dump")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-dump"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-dump"
         ;;
     "mon getmap")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-map"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-map"
         ;;
     "mon metadata")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-metadata"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-metadata"
         ;;
     "mon stat")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-stat"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/monitor_info-stat"
         ;;
     "orch ls")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-ls"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-ls"
         ;;
     "orch ls --format yaml")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-ls_yaml"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-ls_yaml"
         ;;
     "orch ps")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-ps"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-ps"
         ;;
     "orch status")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-status"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/orch_info-status"
         ;;
     "osd getcrushmap")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-crushmap"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-crushmap"
         ;;
     "osd df")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-df"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-df"
         ;;
     "osd df -f json")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-df.json"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-df.json"
         ;;
     "osd df tree")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-df-tree"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-df-tree"
         ;;
     "osd dump")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump"
         ;;
     "osd dump -f json")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump.json"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump.json"
         ;;
     "osd getmap")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-map"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-map"
         ;;
     "osd metadata"|"osd metadata "[0-9]*)
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-metadata"
-	filter="osd_metadata_filter ${cmd#osd metadata}"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-metadata"
+        filter="osd_metadata_filter ${cmd#osd metadata}"
         ;;
     "osd perf")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-perf"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-perf"
         ;;
     "osd pool ls detail")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump"
-	filter=osd_pool_ls_detail_filter
-	;;
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-dump"
+        filter=osd_pool_ls_detail_filter
+        ;;
     "osd stat")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-stat"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-stat"
         ;;
     "osd tree")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-tree"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-tree"
         ;;
     "osd tree -f json")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-tree_json"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-tree_json"
         ;;
     "pg dump")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump"
         ;;
     "pg dump -f json"|"pg dump --format json")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json"
         ;;
     "pg dump_stuck")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_stuck"
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_stuck"
+        ;;
+    "healthcheck history ls")
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/prometheus_info-healthcheck_history_ls"
+        ;;
+    "prometheus file_sd_config")
+        file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/prometheus_info-file_sd_config"
         ;;
     tell*)
-	tell ${cmd#tell}
-	exit 0
-	;;
+        tell ${cmd#tell}
+        exit 0
+        ;;
     *)
-	echo "invalid or unsupported ceph command: $cmd" >&2
+        echo "invalid or unsupported ceph command: $cmd" >&2
         exit 1
         ;;
 esac

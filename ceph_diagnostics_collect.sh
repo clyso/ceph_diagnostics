@@ -472,6 +472,21 @@ get_orch_info() {
     store    ${t}-host ${CEPH} orch host ls
 }
 
+get_prometheus_info() {
+    local t=prometheus_info
+    local target
+
+    info "collecting prometheus info ..."
+
+    store    ${t}-healthcheck_history_ls ${CEPH} healthcheck history ls
+    store -s ${t}-file_sd_config         ${CEPH} prometheus file_sd_config
+
+    show_stored ${t}-file_sd_config | jq -r '.[].targets[]' |
+    while read target; do
+        store -S ${t}-${target}-metrics curl http://${target}/metrics
+    done
+}
+
 archive_result() {
     local result_archive compress
 
@@ -556,10 +571,10 @@ while true; do
             VERBOSE=Y
             shift
             ;;
-	-C|--crash-last-days)
-	    CRASH_LAST_DAYS="$2"
-	    shift 2
-	    ;;
+        -C|--crash-last-days)
+            CRASH_LAST_DAYS="$2"
+            shift 2
+            ;;
         -D|--mds-perf-reset-and-sleep)
             RESET_MDS_PERF_AND_SLEEP="$2"
             shift 2
@@ -580,10 +595,10 @@ while true; do
             RADOSGW_ADMIN_TIMEOUT="$2"
             shift 2
             ;;
-	-V|--version)
-	    version
-	    exit 0
-	    ;;
+        -V|--version)
+            version
+            exit 0
+            ;;
         --)
             shift
             break
@@ -642,5 +657,6 @@ get_mds_info
 get_fs_info
 get_radosgw_admin_info
 get_orch_info
+get_prometheus_info
 
 archive_result

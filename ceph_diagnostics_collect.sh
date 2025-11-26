@@ -482,7 +482,7 @@ get_prometheus_info() {
     store    ${t}-healthcheck_history_ls ${CEPH} healthcheck history ls
     store -s ${t}-file_sd_config         ${CEPH} prometheus file_sd_config
 
-    show_stored ${t}-file_sd_config | jq -r '.[].targets[]' |
+    show_stored ${t}-file_sd_config | jq -r '.[].targets[]' | sort -u |
     while read target; do
         store -S ${t}-${target}-metrics curl http://${target}/metrics
     done

@@ -240,6 +240,7 @@ get_health_info() {
     store -s ${t}-report          ${CEPH} report
     store    ${t}-crash_ls        ${CEPH} crash ls
     store    ${t}-balancer-status ${CEPH} balancer status
+    store -s ${t}-service-status  ${CEPH} service status
 
     if [ "${CRASH_LAST_DAYS}" -gt 0 ]; then
         oldest=$(date -d "-${CRASH_LAST_DAYS} days" +%F)
@@ -472,6 +473,21 @@ get_orch_info() {
     store    ${t}-host ${CEPH} orch host ls
 }
 
+get_prometheus_info() {
+    local t=prometheus_info
+    local target
+
+    info "collecting prometheus info ..."
+
+    store    ${t}-healthcheck_history_ls ${CEPH} healthcheck history ls
+    store -s ${t}-file_sd_config         ${CEPH} prometheus file_sd_config
+
+    show_stored ${t}-file_sd_config | jq -r '.[].targets[]' | sort -u |
+    while read target; do
+        store -S ${t}-${target}-metrics curl http://${target}/metrics
+    done
+}
+
 archive_result() {
     local result_archive compress
 
@@ -556,10 +572,10 @@ while true; do
             VERBOSE=Y
             shift
             ;;
-	-C|--crash-last-days)
-	    CRASH_LAST_DAYS="$2"
-	    shift 2
-	    ;;
+        -C|--crash-last-days)
+            CRASH_LAST_DAYS="$2"
+            shift 2
+            ;;
         -D|--mds-perf-reset-and-sleep)
             RESET_MDS_PERF_AND_SLEEP="$2"
             shift 2
@@ -580,10 +596,10 @@ while true; do
             RADOSGW_ADMIN_TIMEOUT="$2"
             shift 2
             ;;
-	-V|--version)
-	    version
-	    exit 0
-	    ;;
+        -V|--version)
+            version
+            exit 0
+            ;;
         --)
             shift
             break
@@ -604,6 +620,12 @@ fi
 
 if [ "${VERBOSE}" = Y ]; then
     set -x
+fi
+
+# check `jq` is available
+if ! which jq > /dev/null 2>&1; then
+    echo "jq command not found, please install jq package" >&2
+    exit 1
 fi
 
 CEPH="${CEPH} --conf=${CEPH_CONFIG_FILE} --connect-timeout=${CEPH_TIMEOUT}"
@@ -642,5 +664,6 @@ get_mds_info
 get_fs_info
 get_radosgw_admin_info
 get_orch_info
+get_prometheus_info
 
 archive_result

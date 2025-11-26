@@ -622,6 +622,12 @@ if [ "${VERBOSE}" = Y ]; then
     set -x
 fi
 
+# check `jq` is available
+if ! which jq > /dev/null 2>&1; then
+    echo "jq command not found, please install jq package" >&2
+    exit 1
+fi
+
 CEPH="${CEPH} --conf=${CEPH_CONFIG_FILE} --connect-timeout=${CEPH_TIMEOUT}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN} --conf=${CEPH_CONFIG_FILE}"
 

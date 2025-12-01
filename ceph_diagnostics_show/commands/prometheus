@@ -1,0 +1,45 @@
+#!/bin/sh
+
+description() {
+    echo "print info collected from prometheus module"
+}
+
+help() {
+    description
+    echo ""
+    echo "supported commands:"
+    echo ""
+    echo "  healthcheck history ls"
+    echo "  file_sd_config"
+    echo "  metrics"
+}
+
+cmd="$@"
+
+case "$cmd" in
+    description)
+        description
+        exit 0
+        ;;
+    help)
+        help
+        exit 0
+        ;;
+    "healthcheck history ls")
+        cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/prometheus_info-healthcheck_history_ls"
+        ;;
+    "file_sd_config")
+        cat "${CEPH_DIAGNOSTICS_COLLECT_DIR}/prometheus_info-file_sd_config"
+        ;;
+    "metrics")
+        ls ${CEPH_DIAGNOSTICS_COLLECT_DIR}/prometheus_info-*-metrics 2>/dev/null |
+        while read -r f; do
+            cat "${f}"
+            echo ""
+        done
+        ;;
+    *)
+        echo "invalid or unsupported command: $cmd" >&2
+        exit 1
+        ;;
+esac

@@ -643,11 +643,16 @@ if `which timeout > /dev/null 2>&1`; then
 fi
 
 if [ -n "${RESULTS_DIR}" ]; then
-    mkdir -p "${RESULTS_DIR}"
+    if [ -e "${RESULTS_DIR}" ]; then
+        echo "Cannot use ${RESULTS_DIR} as directory for storing results:" \
+             "already exists" >&2
+        exit 1
+    fi
+    mkdir "${RESULTS_DIR}"
 else
     RESULTS_DIR=$(mktemp -d /tmp/ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX)
 fi
-mkdir -p "${RESULTS_DIR}"/COMMANDS
+mkdir  "${RESULTS_DIR}"/COMMANDS
 
 trap cleanup INT TERM EXIT
 

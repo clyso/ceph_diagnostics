@@ -38,6 +38,7 @@ usage()
     echo "                                         not more than N osds (default ${ASOK_STATS_MAX_OSDS})"
     echo "  -q | --query-inactive-pg               query inactive pg"
     echo "  -r | --results-dir <dir>               directory to store result"
+    echo "                                         (deprecated, use -d and -a instead)"
     echo "  -t | --timeout <sec>                   timeout for ceph operations"
     echo "  -u | --uncensored                      don't hide sensitive data"
     echo "  -v | --verbose                         be verbose"
@@ -673,6 +674,8 @@ if [ -n "${ARCHIVE_NAME}" -o -n "${ARCHIVE_DIR}" ]; then
         RESULTS_DIR=$(mktemp -d "${ARCHIVE_DIR}/ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX")
     fi
 elif [ -n "${RESULTS_DIR}" ]; then
+    echo "WARNING: --results-dir option is deprecated, please use" \
+         "--archive-name and --archive-dir options instead" >&2
     if [ -e "${RESULTS_DIR}" ]; then
         echo "Cannot use ${RESULTS_DIR} as directory for storing results:" \
              "already exists" >&2

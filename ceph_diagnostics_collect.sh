@@ -30,12 +30,15 @@ usage()
     echo
     echo "Options:"
     echo
+    echo "  -a | --archive-name <name>             name of the result archive"
     echo "  -c | --ceph-config-file <file>         ceph configuration file"
+    echo "  -d | --archive-dir <dir>               directory to store result archive"
     echo "  -h | --help                            print this help and exit"
     echo "  -m | --asok-stats-max-osds <N>         get data via admin socket (tell) for"
     echo "                                         not more than N osds (default ${ASOK_STATS_MAX_OSDS})"
     echo "  -q | --query-inactive-pg               query inactive pg"
     echo "  -r | --results-dir <dir>               directory to store result"
+    echo "                                         (deprecated, use -d and -a instead)"
     echo "  -t | --timeout <sec>                   timeout for ceph operations"
     echo "  -u | --uncensored                      don't hide sensitive data"
     echo "  -v | --verbose                         be verbose"
@@ -531,7 +534,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o c:hm:qr:t:uvC:D:G:M:O:T:V --long asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
+OPTIONS=$(getopt -o a:c:d:hm:qr:t:uvC:D:G:M:O:T:V --long archive-name:,archive-dir:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -544,10 +547,18 @@ while true; do
             usage
             exit 0
             ;;
+	-a|--archive-name)
+	    ARCHIVE_NAME="$2"
+	    shift 2
+	    ;;
         -c|--ceph-config-file)
             CEPH_CONFIG_FILE="$2"
             shift 2
             ;;
+	-d|--archive-dir)
+	    ARCHIVE_DIR="$2"
+	    shift 2
+	    ;;
         -m|--asok-stats-max-osds)
             ASOK_STATS_MAX_OSDS="$2"
             shift 2
@@ -642,12 +653,39 @@ if `which timeout > /dev/null 2>&1`; then
     RADOSGW_ADMIN="timeout ${verbose_opt} ${RADOSGW_ADMIN_TIMEOUT} ${RADOSGW_ADMIN}"
 fi
 
-if [ -n "${RESULTS_DIR}" ]; then
-    mkdir -p "${RESULTS_DIR}"
+if [ -n "${ARCHIVE_NAME}" -o -n "${ARCHIVE_DIR}" ]; then
+    if [ -n "${RESULTS_DIR}" ]; then
+        echo "Cannot use both --results-dir and --archive-name|dir" \
+             "options simultaneously" >&2
+        exit 1
+    fi
+    if [ -z "${ARCHIVE_DIR}" ]; then
+        ARCHIVE_DIR="/tmp"
+    fi
+    if [ -n "${ARCHIVE_NAME}" ]; then
+        RESULTS_DIR="${ARCHIVE_DIR}/${ARCHIVE_NAME}"
+        if [ -e "${RESULTS_DIR}" ]; then
+            echo "Cannot use ${RESULTS_DIR} as directory for storing results:" \
+                 "already exists" >&2
+            exit 1
+        fi
+        mkdir "${RESULTS_DIR}"
+    else
+        RESULTS_DIR=$(mktemp -d "${ARCHIVE_DIR}/ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX")
+    fi
+elif [ -n "${RESULTS_DIR}" ]; then
+    echo "WARNING: --results-dir option is deprecated, please use" \
+         "--archive-name and --archive-dir options instead" >&2
+    if [ -e "${RESULTS_DIR}" ]; then
+        echo "Cannot use ${RESULTS_DIR} as directory for storing results:" \
+             "already exists" >&2
+        exit 1
+    fi
+    mkdir "${RESULTS_DIR}"
 else
     RESULTS_DIR=$(mktemp -d /tmp/ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX)
 fi
-mkdir -p "${RESULTS_DIR}"/COMMANDS
+mkdir  "${RESULTS_DIR}"/COMMANDS
 
 trap cleanup INT TERM EXIT
 

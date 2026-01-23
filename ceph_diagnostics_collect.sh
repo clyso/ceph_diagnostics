@@ -6,6 +6,7 @@
 
 CENSORED="${CENSORED:-<CENSORED>}"
 CEPH="${CEPH:-ceph}"
+RADOS="${RADOS:-rados}"
 CEPH_CONFIG_FILE="${CEPH_CONFIG_FILE:-/etc/ceph/ceph.conf}"
 CEPH_TIMEOUT="${CEPH_TIMEOUT:-10}"
 QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
@@ -478,6 +479,14 @@ get_orch_info() {
 	store	 ${t}-osd-rm-status ${CEPH} orch osd rm status
 }
 
+get_rados_info() {
+    local t=rados
+
+    info "collecting rados info ..."
+
+    store    ${t}-df ${RADOS} df
+}
+
 get_prometheus_info() {
     local t=prometheus_info
     local target
@@ -642,6 +651,7 @@ if ! which jq > /dev/null 2>&1; then
 fi
 
 CEPH="${CEPH} --conf=${CEPH_CONFIG_FILE} --connect-timeout=${CEPH_TIMEOUT}"
+RADOS="${RADOS} --conf=${CEPH_CONFIG_FILE}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN} --conf=${CEPH_CONFIG_FILE}"
 
 # use timeout(1) when running cli commands if it is available
@@ -704,6 +714,7 @@ get_mds_info
 get_fs_info
 get_radosgw_admin_info
 get_orch_info
+get_rados_info
 get_prometheus_info
 
 archive_result

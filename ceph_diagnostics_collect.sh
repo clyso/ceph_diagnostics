@@ -474,6 +474,8 @@ get_orch_info() {
     store -S ${t}-ls_yaml ${CEPH} orch ls --format yaml
     store    ${t}-ps ${CEPH} orch ps
     store    ${t}-host ${CEPH} orch host ls
+	store    ${t}-host-ls-detail ${CEPH} orch host ls --detail
+	store	 ${t}-osd-rm-status ${CEPH} orch osd rm status
 }
 
 get_prometheus_info() {

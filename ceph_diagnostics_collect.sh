@@ -476,6 +476,7 @@ get_orch_info() {
     store    ${t}-host ${CEPH} orch host ls
 	store    ${t}-host-ls-detail ${CEPH} orch host ls --detail
 	store	 ${t}-osd-rm-status ${CEPH} orch osd rm status
+	store	 ${t}-client-keyring-ls ${CEPH} orch client-keyring ls
 }
 
 get_prometheus_info() {

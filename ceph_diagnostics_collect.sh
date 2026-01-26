@@ -331,15 +331,16 @@ get_osd_info() {
 
     info "collecting osd info ..."
 
-    store -c ${t}-tree      ${CEPH} osd tree
-    store    ${t}-df        ${CEPH} osd df
-    store    ${t}-df-tree   ${CEPH} osd df tree
-    store    ${t}-dump      ${CEPH} osd dump
-    store    ${t}-stat      ${CEPH} osd stat
-    store -s ${t}-crushmap  ${CEPH} osd getcrushmap
-    store -s ${t}-map       ${CEPH} osd getmap
-    store -s ${t}-metadata  ${CEPH} osd metadata
-    store    ${t}-perf      ${CEPH} osd perf
+    store -c ${t}-tree      		${CEPH} osd tree
+    store    ${t}-df        		${CEPH} osd df
+    store    ${t}-df-tree   		${CEPH} osd df tree
+    store    ${t}-dump      		${CEPH} osd dump
+    store    ${t}-stat      		${CEPH} osd stat
+    store -s ${t}-crushmap  		${CEPH} osd getcrushmap
+    store -s ${t}-map       		${CEPH} osd getmap
+    store -s ${t}-metadata  		${CEPH} osd metadata
+    store    ${t}-perf      		${CEPH} osd perf
+    store    ${t}-osd-pool-stats    ${CEPH} osd pool stats	
 
     show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
 

@@ -9,7 +9,7 @@ from datetime import datetime
 
 sys.path.append(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-from common import json_load
+from common import json_load, handle_broken_pipe
 
 
 #
@@ -71,6 +71,7 @@ def get_longest_event(op):
 
     return longest
 
+@handle_broken_pipe
 def main():
     if len(sys.argv) > 1:
         if sys.argv[1] == 'description':
@@ -122,4 +123,5 @@ def main():
 # main
 #
 
-main()
+if __name__ == "__main__":
+    main()

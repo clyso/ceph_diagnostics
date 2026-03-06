@@ -6,7 +6,7 @@ import sys
 
 sys.path.append(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-from common import get_report
+from common import get_report, handle_broken_pipe
 
 #
 # Global
@@ -131,6 +131,7 @@ def pool(pools):
 
         print(info)
 
+@handle_broken_pipe
 def main():
     if len(sys.argv) > 1:
         if sys.argv[1] == 'description':
@@ -149,4 +150,5 @@ def main():
 # main
 #
 
-main()
+if __name__ == "__main__":
+    main()

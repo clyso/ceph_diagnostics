@@ -40,6 +40,13 @@ parser.add_argument(
     help='sort by duration',
     default=False,
 )
+parser.add_argument(
+    '-r', '--correlate-subops',
+    action='store_true',
+    help='try to correlate osd ops with repops',
+    default=False,
+)
+
 
 #
 # Functions
@@ -70,6 +77,39 @@ def get_longest_event(op):
         previous = e
 
     return longest
+
+def get_subops_info(op):
+    for e in op['type_data']['events']:
+        m = re.match(r'^waiting for subops from (.*)', e['event'])
+        if not m:
+            continue
+        osds = [f'osd.{i}' for i in m.group(1).split(',')]
+        return time_from_str(e['time']), osds
+
+    return None, None
+
+def get_subops(ops, primary, client, oid, sent_time, duration, osds):
+    subops = {osd: None for osd in osds}
+
+    for op in ops:
+        if op['daemon'] not in osds:
+            continue
+        initiated_at = time_from_str(op['initiated_at'])
+        if initiated_at < sent_time or initiated_at > sent_time + duration:
+            continue
+        m = re.match(
+            r'^osd_repop\((osd\.\d+|client\.\d+)\.[^\s]+\s+[^\s]+\s+[^\s]+\s+([^\s]+)',
+            op['description']
+        )
+        if not m:
+            continue
+        if m.group(1) not in (primary, client) or m.group(2) != oid:
+            continue
+        if not subops[op['daemon']] or \
+           initiated_at < time_from_str(subops[op['daemon']]['initiated_at']):
+            subops[op['daemon']] = op
+
+    return subops
 
 @handle_broken_pipe
 def main():
@@ -115,6 +155,28 @@ def main():
                                                    op['initiated_at'],
                                                    name, duration,
                                                    op['description']))
+            if not args.correlate_subops or not op['daemon'].startswith('osd.'):
+                continue
+            m = re.match(r'^osd_op\((client\.\d+)\.[^\s]+\s+[^\s]+\s+([^\s]+)', op['description'])
+            if not m:
+                continue
+            client= m.group(1)
+            oid = m.group(2)
+            sent_time, osds = get_subops_info(op)
+            if not sent_time:
+                continue
+            subops = get_subops(ops, op['daemon'], client, oid, sent_time,
+                                op['duration'], osds)
+            for osd, op in subops.items():
+                if not op:
+                    print('  -> %-8s <NO MATCHING OP>' % (osd))
+                    continue
+                name, duration = get_longest_event(op)
+                print('  -> %-8s %1.3f %s [%s %1.3f] %s' % (op['daemon'],
+                                                            op['duration'],
+                                                            op['initiated_at'],
+                                                            name, duration,
+                                                            op['description']))
             sys.stdout.flush()
     except IOError as e:
         pass

@@ -19,7 +19,7 @@ def parse_json_constants(arg):
     return None
 
 def json_load(filename, exit_on_error=True):
-    size = 0
+    file_size = 0
     try:
         file_size = os.path.getsize(filename)
         with open(filename, "r") as f:
@@ -38,7 +38,7 @@ def json_load(filename, exit_on_error=True):
             return json.loads(json_data,
                               parse_constant=parse_json_constants)
     except json.JSONDecodeError as e:
-        if size == 0:
+        if file_size == 0:
             e = "file is empty"
         print(f"Error parsing JSON file {filename}: {e}", file=sys.stderr)
         if exit_on_error:

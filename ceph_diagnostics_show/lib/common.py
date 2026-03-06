@@ -1,7 +1,11 @@
 import json
 import math
 import os
+import signal
 import sys
+
+from functools import wraps
+
 
 CEPH_DIAGNOSTICS_COLLECT_DIR = os.environ.get("CEPH_DIAGNOSTICS_COLLECT_DIR")
 
@@ -48,3 +52,19 @@ def json_load(filename, exit_on_error=True):
 
 def get_report():
     return json_load(CEPH_DIAGNOSTICS_COLLECT_DIR + "/cluster_health-report")
+
+def handle_broken_pipe(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Handle BrokenPipeError gracefully
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+        try:
+            return func(*args, **kwargs)
+        except BrokenPipeError:
+            # when piping to less
+            # Python flushes standard streams on exit; redirect remaining output
+            # to /dev/null to avoid another BrokenPipeError at that time
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+            sys.exit(1)  # Python exits with error code 1 on EPIPE
+    return wrapper

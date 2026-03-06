@@ -25,10 +25,16 @@ def json_load(filename, exit_on_error=True):
         with open(filename, "r") as f:
             # Replace " inf," with " Infinity," to avoid json parsing error:
             # python json module does not support "inf", "-inf", "nan" as valid json constants
-            json_data = f.read().replace(
+            json_data = f.read()
+
+            if not json_data.strip():
+                file_size = 0
+
+            json_data = json_data.replace(
                 " inf,", " Infinity,").replace(
                     " -inf,", " -Infinity,").replace(
                         " nan,", " NaN,")
+
             return json.loads(json_data,
                               parse_constant=parse_json_constants)
     except json.JSONDecodeError as e:

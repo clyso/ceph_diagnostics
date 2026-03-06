@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
 import os
 import sys
 
 sys.path.append(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-from common import handle_broken_pipe
+from common import json_load, handle_broken_pipe
 
 #
 # Global
@@ -45,31 +44,19 @@ def rgw_bucket_stats(args=None):
         print("Please ensure 'radosgw-admin bucket stats' was collected.", file=sys.stderr)
         return
 
-    with open(stats_file, 'r') as f:
-        bucket_stats_content = f.read()
+    bucket_stats = json_load(stats_file)
 
-    # Handle empty file
-    if not bucket_stats_content.strip():
-        print(f"Warning: Bucket stats file '{stats_file}' is empty.", file=sys.stderr)
-        return
-
-    try:
-        bucket_stats_data = json.loads(bucket_stats_content)
-    except json.JSONDecodeError as e:
-        print(f"Error decoding JSON from '{stats_file}': {e}", file=sys.stderr)
-        return
-
-    # Ensure bucket_stats_data is a list
-    if not isinstance(bucket_stats_data, list):
-        if isinstance(bucket_stats_data, dict) and 'bucket' in bucket_stats_data:
-            bucket_stats_data = [bucket_stats_data]
+    # Ensure bucket_stats is a list
+    if not isinstance(bucket_stats, list):
+        if isinstance(bucket_stats, dict) and 'bucket' in bucket_stats:
+            bucket_stats = [bucket_stats]
         else:
-            print(f"Error: Expected a list of buckets in '{stats_file}', but got {type(bucket_stats_data)}", file=sys.stderr)
+            print(f"Error: Expected a list of buckets in '{stats_file}', but got {type(bucket_stats)}", file=sys.stderr)
             return
 
     # Process bucket data
     analyzed_buckets = []
-    for bucket_info in bucket_stats_data:
+    for bucket_info in bucket_stats:
         try:
             bucket_name = bucket_info.get('bucket', 'N/A')
             num_shards = bucket_info.get('num_shards', 0)

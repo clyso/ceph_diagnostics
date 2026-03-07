@@ -46,6 +46,12 @@ parser.add_argument(
     help='try to correlate osd ops with repops',
     default=False,
 )
+parser.add_argument(
+    '-s', '--slow-ops',
+    action='store_true',
+    help='also process slow ops dumps',
+    default=False,
+)
 
 
 #
@@ -125,7 +131,11 @@ def main():
 
     ops = []
     for fname in os.listdir(CEPH_DIAGNOSTICS_COLLECT_DIR):
-        m = re.match(r'^.*-(mds|mon|osd)\.(.+)[-_]dump_historic_ops$', fname)
+        slow = 'slow_' if args.slow_ops else ''
+        m = re.match(
+            rf'^.*-(mds|mon|osd)\.(.+)[-_]dump_historic_({slow})?ops$',
+            fname
+        )
         if not m:
             continue
         daemon_type = m.group(1)
@@ -139,7 +149,15 @@ def main():
         )
         if not historic_ops:
             continue
-        ops.extend([dict({'daemon' : daemon}, **x) for x in historic_ops['ops']])
+        ops_key = None
+        for k in ('ops', 'Ops'):
+            if k in historic_ops:
+                ops_key = k
+                break
+        if not ops_key:
+            print(f'Warning: no ops key found in {fname}, skipping', file=sys.stderr)
+            continue
+        ops.extend([dict({'daemon' : daemon}, **x) for x in historic_ops[ops_key]])
 
     if args.sort_by_duration:
         ops.sort(key=lambda op: op['duration'], reverse=True)

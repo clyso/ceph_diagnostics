@@ -68,18 +68,18 @@ def time_from_str(time_str):
     dt = datetime.strptime(time_str, '%Y-%m-%dT%H:%M:%S.%f%z')
     return dt.timestamp()
 
-def get_longest_event(op):
+def get_longest_event_transition(op):
     longest= (None, 0)
     previous = None
 
     for e in op['type_data']['events']:
         t = e['time']
         if previous is None:
-            longest = (e['event'], 0)
+            longest = (f" -> {e['event']}", 0)
         else:
             d = time_from_str(t) - time_from_str(previous['time'])
             if d > longest[1]:
-                longest = (previous['event'], d)
+                longest = (f"{previous['event']} -> {e['event']}", d)
         previous = e
 
     return longest
@@ -167,7 +167,7 @@ def main():
 
     try:
         for op in ops:
-            name, duration = get_longest_event(op)
+            name, duration = get_longest_event_transition(op)
             print('%-8s %1.3f %s [%s %1.3f] %s' % (op['daemon'],
                                                    op['duration'],
                                                    op['initiated_at'],
@@ -189,7 +189,7 @@ def main():
                 if not op:
                     print('  -> %-8s <NO MATCHING OP>' % (osd))
                     continue
-                name, duration = get_longest_event(op)
+                name, duration = get_longest_event_transition(op)
                 print('  -> %-8s %1.3f %s [%s %1.3f] %s' % (op['daemon'],
                                                             op['duration'],
                                                             op['initiated_at'],

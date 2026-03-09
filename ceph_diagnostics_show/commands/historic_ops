@@ -68,6 +68,12 @@ def time_from_str(time_str):
     dt = datetime.strptime(time_str, '%Y-%m-%dT%H:%M:%S.%f%z')
     return dt.timestamp()
 
+def reformat_time(time_str):
+    m = re.match(r'\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2}\.\d+)[+-]\d{2}\d{2}', time_str)
+    if m:
+        return m.group(1)
+    return time_str
+
 def get_longest_event_transition(op):
     longest= (None, 0)
     previous = None
@@ -168,11 +174,12 @@ def main():
     try:
         for op in ops:
             name, duration = get_longest_event_transition(op)
-            print('%-8s %1.3f %s [%s %1.3f] %s' % (op['daemon'],
-                                                   op['duration'],
-                                                   op['initiated_at'],
-                                                   name, duration,
-                                                   op['description']))
+            print('%-8s %1.3f %s [%s %1.3f] %s' %
+                  (op['daemon'],
+                   op['duration'],
+                   reformat_time(op['initiated_at']),
+                   name, duration,
+                   op['description']))
             if not args.correlate_subops or not op['daemon'].startswith('osd.'):
                 continue
             m = re.match(r'^osd_op\((client\.\d+)\.[^\s]+\s+[^\s]+\s+([^\s]+)', op['description'])
@@ -190,11 +197,12 @@ def main():
                     print('  -> %-8s <NO MATCHING OP>' % (osd))
                     continue
                 name, duration = get_longest_event_transition(op)
-                print('  -> %-8s %1.3f %s [%s %1.3f] %s' % (op['daemon'],
-                                                            op['duration'],
-                                                            op['initiated_at'],
-                                                            name, duration,
-                                                            op['description']))
+                print('  -> %-8s %1.3f %s [%s %1.3f] %s' %
+                      (op['daemon'],
+                       op['duration'],
+                       reformat_time(op['initiated_at']),
+                       name, duration,
+                       op['description']))
             sys.stdout.flush()
     except IOError as e:
         pass

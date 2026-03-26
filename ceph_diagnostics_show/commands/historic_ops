@@ -65,7 +65,10 @@ def help():
     parser.print_help()
 
 def time_from_str(time_str):
-    dt = datetime.strptime(time_str, '%Y-%m-%dT%H:%M:%S.%f%z')
+    try:
+        dt = datetime.strptime(time_str, '%Y-%m-%dT%H:%M:%S.%f%z')
+    except ValueError:
+        return 0
     return dt.timestamp()
 
 def reformat_time(time_str):
@@ -84,7 +87,8 @@ def get_longest_event_transition(op):
             longest = (f" -> {e['event']}", 0)
         else:
             d = time_from_str(t) - time_from_str(previous['time'])
-            if d > longest[1]:
+            # check the calculated duration makes sense before using it
+            if d <= op['duration'] and d > longest[1]:
                 longest = (f"{previous['event']} -> {e['event']}", d)
         previous = e
 

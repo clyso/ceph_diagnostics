@@ -1,7 +1,7 @@
 # Ceph Diagnostics Show
 
 This is a collection of scripts for displaying and analyzing data
-collected by `ceph_diagnostics_collect.py`.
+collected by `ceph_diagnostics_collect.sh`.
 
 The scripts are stored in commands subdirectory and are supposed to be
 run via `ceph_diagnostics_show` (aka `cds` wrapper).
@@ -12,7 +12,7 @@ run via `ceph_diagnostics_show` (aka `cds` wrapper).
 $ git clone https://gitlab.clyso.com/clyso/ceph_diagnostics.git
 $ cd ceph_diagnostics/ceph_diagnostics_show
 $ PATH=$(pwd):$PATH # add `cds` script to the path
-$ cd ~/arch/ceph-collect_20220530_140200 # cd to a ceph_diagnostics_collect.py collected data dir
+$ cd ~/arch/ceph-collect_20220530_140200 # cd to a ceph_diagnostics_collect.sh collected data dir
 $ cds help
 Ceph Diagnostics Show
 
@@ -151,7 +151,7 @@ To add a new command create a script (executable) in
 `ceph_diagnostics_show/commands` subdirectory with the name of the new
 command. The script may expect that at the moment of its execution the
 `CEPH_DIAGNOSTICS_COLLECT_DIR` environment variable is set to the
-location of a ceph_diagnostics_collect.py collected data dir, and use
+location of a `ceph_diagnostics_collect.sh` collected data dir, and use
 this variable when looking for files. When run with `description`
 argument the script should just print its one line description and
 exit. When run with `help` argument the script should print its help

@@ -23,7 +23,7 @@ Commands:
   cct                     run cct command
   ceph                    print ceph command output
   check-pg-on-same-host   check 2 or more pg replica/shards on the same host
-  copilot                 run copilot command
+  otto                 run otto command
   crush                   show ceph crush info
   find-by-addr            find daemon by <ip:port> address
   fsa                     run fsa command
@@ -113,17 +113,18 @@ $ cds ceph status
     client:   9.0 MiB/s wr, 0 op/s rd, 4 op/s wr
 ``` 
 
-## Integrating ceph-copilot, clyso-fsa and cct
+## Integrating otto, clyso-fsa and cct
 
-`ceph-copilot`, `clyso-fsa` and `cct` are @clyso internal Ceph analyzing tools.
-If you have access to them you may easily integrate them with `cds`.
+[`otto`](https://github.com/clyso/otto), `clyso-fsa` and `cct` are
+@clyso internal Ceph analyzing tools. If you have access to them you
+may easily integrate them with `cds`.
 
-For `ceph-copilot` integration, just make sure the `copilot` command is in the
-`PATH` and running. Alternatively you may use `CEPH_COPILOT` environment
+For `otto` integration, just make sure the `otto` command is in the
+`PATH` and running. Alternatively you may use `CEPH_OTTO` environment
 variable, like below:
 
 ```
-export CEPH_COPILOT='source $HOME/clyso/ceph-copilot/.venv/bin/activate && ceph-copilot'
+export CEPH_OTTO="${HOME}/clyso/otto/dist/otto"
 ```
 
 For `clyso-fsa` and/or `cct` integration, when you have them already configured
@@ -139,8 +140,8 @@ export CLYSO_CCT_DIR="${HOME}/clyso/cct"
 After setup the commands below should work:
 
 ```
-$ cds copilot checkup
-$ cds copilot checkup --verbose
+$ cds otto checkup
+$ cds otto checkup --verbose
 $ cds fsa "Wonka Industries"
 $ cds cct crush browse
 ```

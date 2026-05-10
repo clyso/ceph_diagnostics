@@ -1,9 +1,9 @@
 #!/bin/sh
 
-CEPH_COPILOT="${CEPH_COPILOT:-copilot}"
+CEPH_OTTO="${CEPH_OTTO:-otto}"
 
 description() {
-    echo "run copilot command"
+    echo "run otto command"
 }
 
 help() {
@@ -17,13 +17,13 @@ help() {
 }
 
 checkup() {
-    eval ${CEPH_COPILOT} cluster checkup \
+    eval ${CEPH_OTTO} checkup \
          --ceph_report_json="${CEPH_DIAGNOSTICS_COLLECT_DIR}/cluster_health-report" \
          "$@"
 }
 
 pg_distribution() {
-    eval ${CEPH_COPILOT} pools pg distribution \
+    eval ${CEPH_OTTO} pg distribution \
          --osd_tree_json="${CEPH_DIAGNOSTICS_COLLECT_DIR}/osd_info-tree_json" \
          --pg_dump_json="${CEPH_DIAGNOSTICS_COLLECT_DIR}/pg_info-dump_json" \
          "$@"
@@ -50,7 +50,7 @@ case "$cmd" in
 	pg_distribution ${cmd#pg distribution}
 	;;
     *)
-	echo "invalid or unsupported copilot command: $cmd" >&2
+	echo "invalid or unsupported otto command: $cmd" >&2
         exit 1
         ;;
 esac

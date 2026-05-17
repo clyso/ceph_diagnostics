@@ -190,6 +190,21 @@ store_tell() {
     wait
 }
 
+store_messanger_info() {
+    local daemons="$1"; shift
+    local t="$1"; shift
+    local d msgr
+
+    store_tell -s "${daemons}" ${t} messenger_dump messenger dump
+
+    for d in ${daemons}; do
+        show_stored ${t}-${d}-messenger_dump | jq -r '.messengers[]' |
+        while read msgr; do
+            store_tell -S "${d}" ${t} messenger_dump_${msgr} messenger dump ${msgr} --tcp-info
+        done
+    done
+}
+
 show_stored() {
     local name="$1"
 
@@ -286,6 +301,8 @@ get_monitor_info() {
     store_tell -s "${mons}" ${t} ops                    ops
     store_tell -s "${mons}" ${t} perf_dump              perf dump
     store_tell -s "${mons}" ${t} sessions               sessions
+
+    store_messanger_info "${mons}" ${t}
 }
 
 get_device_info() {
@@ -323,6 +340,8 @@ get_manager_info() {
     store_tell -s "${mgrs}" ${t} mgr_status    mgr_status
     store_tell -s "${mgrs}" ${t} perf_dump     perf dump
     store_tell -s "${mgrs}" ${t} status        status
+
+    store_messanger_info "${mgrs}" ${t}
 }
 
 get_osd_info() {
@@ -377,6 +396,8 @@ get_osd_info() {
     store_tell -s "${osds}" ${t} perf_dump                         perf dump
     store_tell -s "${osds}" ${t} status                            status
     store_tell -s "${osds}" ${t} bluestore_allocator_fragmentation bluestore allocator fragmentation block
+
+    store_messanger_info "${osds}" ${t}
 }
 
 get_pg_info() {
@@ -439,6 +460,8 @@ get_fs_info() {
     store_tell -s "${mdss}" ${t} config_show        config show
     store_tell -s "${mdss}" ${t} damage_ls          damage ls
     store_tell -s "${mdss}" ${t} dump_blocked_ops   dump_blocked_ops
+
+    store_messanger_info "${mdss}" ${t}
 }
 
 get_radosgw_admin_info() {
@@ -476,9 +499,9 @@ get_orch_info() {
     store -S ${t}-ls_yaml ${CEPH} orch ls --format yaml
     store    ${t}-ps ${CEPH} orch ps
     store    ${t}-host ${CEPH} orch host ls
-	store    ${t}-host-ls-detail ${CEPH} orch host ls --detail
-	store	 ${t}-osd-rm-status ${CEPH} orch osd rm status
-	store	 ${t}-client-keyring-ls ${CEPH} orch client-keyring ls
+    store    ${t}-host-ls-detail ${CEPH} orch host ls --detail
+    store    ${t}-osd-rm-status ${CEPH} orch osd rm status
+    store    ${t}-client-keyring-ls ${CEPH} orch client-keyring ls
 }
 
 get_rados_info() {

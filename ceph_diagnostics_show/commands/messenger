@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import re
+import sys
+
+sys.path.append(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from common import json_load, handle_broken_pipe
+
+
+#
+# Global
+#
+
+CEPH_DIAGNOSTICS_COLLECT_DIR = os.environ.get('CEPH_DIAGNOSTICS_COLLECT_DIR')
+
+cmd_description='print ceph daemon messenger information'
+
+parser = argparse.ArgumentParser(prog='cds messenger', description=cmd_description)
+parser.add_argument(
+    '-d', '--daemon',
+    metavar='mds.x|mon.x|mgr.x|osd.x',
+    help='print messenger info for this daemon',
+    default=None,
+)
+parser.add_argument(
+    '-n', '--no-keys',
+    action='store_true',
+    help='print only values',
+    default=False,
+)
+parser.add_argument(
+    '-l', '--no-vals',
+    action='store_true',
+    help='print only keys',
+    default=False,
+)
+parser.add_argument(
+    'cmd',
+    nargs='?',
+    help='command to run',
+    choices=['daemons', 'dump', 'grep', 'messengers', 'connections'],
+    default='daemons',
+)
+parser.add_argument(
+    'messenger',
+    nargs='?',
+    help='messenger (if not specified, list all messengers)',
+    default=None,
+)
+parser.add_argument(
+    'key',
+    help='messenger info key',
+    nargs='?',
+    default=None,
+)
+parser.add_argument(
+    'subkey',
+    help='messenger info sub-key',
+    nargs='?',
+    default=None,
+)
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def connections(info):
+    for d in sorted(info.keys()):
+        for m in sorted(info[d].keys()):
+            for c in info[d][m]['messenger']['connections']:
+                print('%-8s %-18s %s' % (d, m, c))
+            sys.stdout.flush()
+
+def grep(messenger, pattern, prefix):
+    for k in sorted(messenger.keys()):
+        if re.search(pattern, k):
+            print('%s %s %s' % (prefix, k, messenger[k]))
+            sys.stdout.flush()
+        if isinstance(messenger[k], dict):
+            grep(messenger[k], pattern, '%s %s' % (prefix, k))
+
+@handle_broken_pipe
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+
+    messengers = {}
+    for fname in os.listdir(CEPH_DIAGNOSTICS_COLLECT_DIR):
+        m = re.match(r'^.*-(mds|mgr|mon|osd)\.(.+)[-_]messenger_dump$', fname)
+        if not m:
+            continue
+        daemon_type = m.group(1)
+        daemon = f'{m.group(1)}.{m.group(2)}'
+        if args.daemon and \
+           args.daemon not in (daemon_type, f'{daemon_type}.*', daemon):
+            continue
+        messengers[daemon] = json_load(
+            os.path.join(CEPH_DIAGNOSTICS_COLLECT_DIR, fname),
+            exit_on_error=False
+        )
+        if not messengers[daemon]:
+            del messengers[daemon]
+            continue
+
+    if args.cmd == 'daemons':
+        for d in sorted(messengers.keys()):
+            print(d)
+            sys.stdout.flush()
+        exit(0)
+
+    if args.cmd == 'messengers':
+        for d in sorted(messengers.keys()):
+            for m in messengers[d].get('messengers', []):
+                print('%-8s %s' % (d, m))
+                sys.stdout.flush()
+        exit(0)
+
+    info = {}
+
+    for fname in os.listdir(CEPH_DIAGNOSTICS_COLLECT_DIR):
+        m = re.match(r'^.*-(mds|mgr|mon|osd)\.(.+)[-_]messenger_dump_([^.]+)$', fname)
+        if not m:
+            continue
+        daemon_type = m.group(1)
+        daemon = f'{m.group(1)}.{m.group(2)}'
+        messenger = m.group(3)
+        if messenger not in messengers.get(daemon, {}).get('messengers', []):
+            continue
+        info[daemon] = info.get(daemon, {})
+        info[daemon][messenger] = json_load(
+            os.path.join(CEPH_DIAGNOSTICS_COLLECT_DIR, fname),
+            exit_on_error=False
+        )
+        if not info[daemon][messenger]:
+            del info[daemon][messenger]
+            continue
+
+    if args.cmd == 'connections':
+        connections(info)
+        exit(0)
+
+    if not args.messenger:
+        for d in sorted(info.keys()):
+            for key in sorted(info[d].keys()):
+                if args.cmd == 'grep':
+                    key = key + ' ' + str(info[d][key])
+                print('%-8s %s' % (d, key))
+                sys.stdout.flush()
+        exit(0)
+
+    if args.cmd == 'grep':
+        for d in sorted(info.keys()):
+            grep(info[d], args.messenger, '%-8s' % d)
+        exit(0)
+
+    for d in sorted(info.keys()):
+        key = args.messenger
+        if args.messenger not in info[d]:
+            continue
+        val = info[d][args.messenger]
+        if args.key:
+            key = key + ' ' + args.key
+            if args.key not in val:
+                continue
+            val = val[args.key]
+        if args.subkey:
+            key = key + ' ' + args.subkey
+            if args.subkey not in val:
+                continue
+            val = val[args.subkey]
+        if args.no_vals:
+            val = list(val)
+        if args.no_keys:
+            print('%-8s %s' % (d, val))
+        else:
+            print('%-8s %s %s' % (d, key, val))
+            sys.stdout.flush()
+
+
+#
+# main
+#
+
+if __name__ == '__main__':
+    main()

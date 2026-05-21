@@ -52,6 +52,12 @@ parser.add_argument(
     help='also process slow ops dumps',
     default=False,
 )
+parser.add_argument(
+    '-f', '--filter',
+    metavar='pattern',
+    help='only print ops whose description matches the pattern',
+    default=None,
+)
 
 
 #
@@ -139,6 +145,13 @@ def main():
 
     args = parser.parse_args()
 
+    if args.filter:
+        try:
+            args.filter = re.compile(args.filter)
+        except re.error as e:
+            print(f'Invalid filter pattern: {e}', file=sys.stderr)
+            exit(1)
+
     ops = []
     for fname in os.listdir(CEPH_DIAGNOSTICS_COLLECT_DIR):
         slow = 'slow_' if args.slow_ops else ''
@@ -177,6 +190,8 @@ def main():
 
     try:
         for op in ops:
+            if args.filter and not re.search(args.filter, op['description']):
+                continue
             name, duration = get_longest_event_transition(op)
             print('%-8s %1.3f %s [%s %1.3f] %s' %
                   (op['daemon'],

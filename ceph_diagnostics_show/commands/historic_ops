@@ -22,20 +22,26 @@ cmd_description='print ceph daemon historic ops'
 
 parser = argparse.ArgumentParser(prog='cds historic_ops', description=cmd_description)
 parser.add_argument(
-    'daemon',
+    'cmd',
+    nargs='?',
+    help='command to run',
+    choices=['daemons', 'show', 'group-by-event-intervals'],
+    default='daemons',
+)
+parser.add_argument(
+    '-d', '--daemon',
     metavar='mds.x|mon.x|osd.x',
     help='print ops for this daemon',
-    nargs='?',
     default=None,
 )
 parser.add_argument(
-    '-d', '--sort-by-daemon',
+    '-D', '--sort-by-daemon',
     action='store_true',
     help='sort by daemon',
     default=False,
 )
 parser.add_argument(
-    '-t', '--sort-by-duration',
+    '-T', '--sort-by-duration',
     action='store_true',
     help='sort by duration',
     default=False,
@@ -51,6 +57,12 @@ parser.add_argument(
     action='store_true',
     help='also process slow ops dumps',
     default=False,
+)
+parser.add_argument(
+    '-f', '--filter',
+    metavar='pattern',
+    help='only print ops whose description matches the pattern',
+    default=None,
 )
 
 
@@ -139,7 +151,15 @@ def main():
 
     args = parser.parse_args()
 
+    if args.filter:
+        try:
+            args.filter = re.compile(args.filter)
+        except re.error as e:
+            print(f'Invalid filter pattern: {e}', file=sys.stderr)
+            exit(1)
+
     ops = []
+    daemons = set()
     for fname in os.listdir(CEPH_DIAGNOSTICS_COLLECT_DIR):
         slow = 'slow_' if args.slow_ops else ''
         m = re.match(
@@ -150,6 +170,10 @@ def main():
             continue
         daemon_type = m.group(1)
         daemon = f'{m.group(1)}.{m.group(2)}'
+        if args.daemon and \
+           args.daemon not in (daemon_type, f'{daemon_type}.*', daemon):
+            continue
+        daemons.add(daemon)
         if args.daemon and \
            args.daemon not in (daemon_type, f'{daemon_type}.*', daemon):
             continue
@@ -169,6 +193,12 @@ def main():
             continue
         ops.extend([dict({'daemon' : daemon}, **x) for x in historic_ops[ops_key]])
 
+    if args.cmd == 'daemons':
+        for d in sorted(daemons):
+            print(d)
+            sys.stdout.flush()
+        exit(0)
+
     if args.sort_by_duration:
         ops.sort(key=lambda op: op['duration'], reverse=True)
 
@@ -176,8 +206,18 @@ def main():
         ops.sort(key=lambda op: op['daemon'])
 
     try:
+        intervals = {}
+
         for op in ops:
+            if args.filter and not re.search(args.filter, op['description']):
+                continue
             name, duration = get_longest_event_transition(op)
+            if args.cmd == 'group-by-event-intervals':
+                if name not in intervals:
+                    intervals[name] = [0, 0, 0]
+                intervals[name][0] += duration
+                intervals[name][1] += 1
+                continue
             print('%-8s %1.3f %s [%s %1.3f] %s' %
                   (op['daemon'],
                    op['duration'],
@@ -208,8 +248,30 @@ def main():
                        name, duration,
                        op['description']))
             sys.stdout.flush()
+
+        if len(intervals) > 0:
+            for name, (total_duration, count, _) in intervals.items():
+                intervals[name][2] = total_duration / count
+            def sort_key(item):
+                return item[1][2], item[1][0], item[1][1]
+            intervals = dict(sorted(intervals.items(), key=sort_key, reverse=True))
+            print(
+                f"{'AVG_DURATION':>12} "
+                f"{'TOTAL_DURATION':>15} "
+                f"{'TOTAL_COUNT':>13} "
+                f" INTERVAL"
+            )
+            for interval, (total, count, avg) in intervals.items():
+                print(
+                    f"{avg:12.3f} "
+                    f"{total:15.3f} "
+                    f"{count:13d} "
+                    f" {interval}"
+                )
+
     except IOError as e:
         pass
+
 
 #
 # main

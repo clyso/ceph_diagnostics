@@ -284,7 +284,7 @@ get_monitor_info() {
     store -s ${t}-map      ${CEPH} mon getmap
     store -s ${t}-metadata ${CEPH} mon metadata
 
-    mons=$(show_stored ${t}-dump | sed -nEe 's/^.* (mon\..*)$/\1/p')
+    mons=$(show_stored ${t}-dump | sed -nEe 's/^.* (mon\.[^; ]*).*$/\1/p')
 
     if [ "${RESET_MON_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${mons}" ${t} perf_reset perf reset all

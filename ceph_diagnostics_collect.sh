@@ -452,6 +452,7 @@ get_fs_info() {
     store_tell -s "${mdss}" ${t} dump_loads         dump loads
     store_tell -s "${mdss}" ${t} dump_mempools      dump_mempools
     store_tell -s "${mdss}" ${t} dump_ops_in_flight dump_ops_in_flight
+    store_tell -s "${mdss}" ${t} get_subtrees       get subtrees
     store_tell -s "${mdss}" ${t} perf_dump          perf dump
     store_tell -s "${mdss}" ${t} scrub_status       scrub status
     store_tell -s "${mdss}" ${t} session_ls         session ls

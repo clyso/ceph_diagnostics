@@ -225,6 +225,7 @@ get_system_info() {
     info "collecting system info ..."
 
     store -S ${t}-uname       uname -a
+    store -S ${t}-cmdline     cat /proc/cmdline
     store -S ${t}-lsb_release lsb_release -a
 }
 

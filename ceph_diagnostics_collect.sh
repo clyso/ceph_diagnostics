@@ -19,6 +19,7 @@ RESET_MDS_PERF_AND_SLEEP="${RESET_MDS_PERF_AND_SLEEP:-0}"
 RESET_MGR_PERF_AND_SLEEP="${RESET_MGR_PERF_AND_SLEEP:-0}"
 RESET_MON_PERF_AND_SLEEP="${RESET_MON_PERF_AND_SLEEP:-0}"
 RESET_OSD_PERF_AND_SLEEP="${RESET_OSD_PERF_AND_SLEEP:-0}"
+RESET_ALL_PERF_AND_SLEEP="${RESET_ALL_PERF_AND_SLEEP:-0}"
 
 #
 # Functions
@@ -49,6 +50,9 @@ usage()
     echo "  -M | --mon-perf-reset-and-sleep <sec>  reset mon perf counters and sleep"
     echo "  -O | --osd-perf-reset-and-sleep <sec>  reset osd perf counters and sleep"
     echo "  -T | --radosgw-admin-timeout <sec>     timeout radosgw-admin operations"
+    echo "  -X | --all-perf-reset-and-sleep <sec>  reset all perf counters at once and"
+    echo "                                         sleep only once (use instead of -D/-G/-M/-O"
+    echo "                                         to avoid sleeping N*sec)"
     echo
 }
 
@@ -287,7 +291,7 @@ get_monitor_info() {
 
     mons=$(show_stored ${t}-dump | sed -nEe 's/^.* (mon\.[^; ]*).*$/\1/p')
 
-    if [ "${RESET_MON_PERF_AND_SLEEP}" -gt 0 ]; then
+    if [ "${RESET_ALL_PERF_AND_SLEEP}" -eq 0 ] && [ "${RESET_MON_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${mons}" ${t} perf_reset perf reset all
         info "sleeping for ${RESET_MON_PERF_AND_SLEEP} sec after reseting mon perf counters ..."
         sleep ${RESET_MON_PERF_AND_SLEEP}
@@ -327,7 +331,7 @@ get_manager_info() {
     mgrs=$(show_stored ${t}-dump |
            sed -nEe 's/^.*"active_name": "([^"]*)".*$/mgr.\1/p')
 
-    if [ "${RESET_MGR_PERF_AND_SLEEP}" -gt 0 ]; then
+    if [ "${RESET_ALL_PERF_AND_SLEEP}" -eq 0 ] && [ "${RESET_MGR_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${mgrs}" ${t} perf_reset perf reset all
         info "sleeping for ${RESET_MGR_PERF_AND_SLEEP} sec after reseting mgr perf counters ..."
         sleep ${RESET_MGR_PERF_AND_SLEEP}
@@ -378,7 +382,7 @@ get_osd_info() {
                }'
          )
 
-    if [ "${RESET_OSD_PERF_AND_SLEEP}" -gt 0 ]; then
+    if [ "${RESET_ALL_PERF_AND_SLEEP}" -eq 0 ] && [ "${RESET_OSD_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${osds}" ${t} perf_reset perf reset all
         info "sleeping for ${RESET_OSD_PERF_AND_SLEEP} sec after reseting osd perf counters ..."
         sleep ${RESET_OSD_PERF_AND_SLEEP}
@@ -442,7 +446,7 @@ get_fs_info() {
     mdss=$(show_stored ${t}-dump |
            sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p')
 
-    if [ "${RESET_MDS_PERF_AND_SLEEP}" -gt 0 ]; then
+    if [ "${RESET_ALL_PERF_AND_SLEEP}" -eq 0 ] && [ "${RESET_MDS_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${mdss}" ${t} perf_reset perf reset all
         info "sleeping for ${RESET_MDS_PERF_AND_SLEEP} sec after reseting mds perf counters ..."
         sleep ${RESET_MDS_PERF_AND_SLEEP}
@@ -464,6 +468,30 @@ get_fs_info() {
     store_tell -s "${mdss}" ${t} dump_blocked_ops   dump_blocked_ops
 
     store_messanger_info "${mdss}" ${t}
+}
+
+reset_all_perf_and_sleep() {
+    local mons mgrs mdss osds d
+
+    info "resetting all perf counters ..."
+
+    mons=$(${CEPH} mon dump 2>/dev/null | sed -nEe 's/^.* (mon\.[^; ]*).*$/\1/p')
+    mgrs=$(${CEPH} mgr dump 2>/dev/null | sed -nEe 's/^.*"active_name": "([^"]*)".*$/mgr.\1/p')
+    mdss=$(${CEPH} fs dump 2>/dev/null | sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p')
+    osds=$(${CEPH} osd tree 2>/dev/null | sort -nrk 3 |
+           awk -v max_osds=${ASOK_STATS_MAX_OSDS} '
+               n[$2] < max_osds && $5 == "up" && $6 > 0.1 {
+                   print $4;
+                   n[$2]++;
+               }')
+
+    for d in ${mons} ${mgrs} ${mdss} ${osds}; do
+        ${CEPH} tell ${d} perf reset all > /dev/null 2>&1 &
+    done
+    wait
+
+    info "sleeping for ${RESET_ALL_PERF_AND_SLEEP} sec after resetting all perf counters ..."
+    sleep ${RESET_ALL_PERF_AND_SLEEP}
 }
 
 get_radosgw_admin_info() {
@@ -572,7 +600,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o a:c:d:hm:qr:t:uvC:D:G:M:O:T:V --long archive-name:,archive-dir:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
+OPTIONS=$(getopt -o a:c:d:hm:qr:t:uvC:D:G:M:O:T:VX: --long archive-name:,archive-dir:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version,all-perf-reset-and-sleep: -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -643,6 +671,10 @@ while true; do
             ;;
         -T|--radosgw-admin-timeout)
             RADOSGW_ADMIN_TIMEOUT="$2"
+            shift 2
+            ;;
+        -X|--all-perf-reset-and-sleep)
+            RESET_ALL_PERF_AND_SLEEP="$2"
             shift 2
             ;;
         -V|--version)
@@ -727,6 +759,10 @@ fi
 mkdir  "${RESULTS_DIR}"/COMMANDS
 
 trap cleanup INT TERM EXIT
+
+if [ "${RESET_ALL_PERF_AND_SLEEP}" -gt 0 ]; then
+    reset_all_perf_and_sleep
+fi
 
 get_script_info
 get_system_info

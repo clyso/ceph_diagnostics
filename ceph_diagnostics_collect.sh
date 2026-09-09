@@ -32,6 +32,7 @@ usage()
     echo "Options:"
     echo
     echo "  -a | --archive-name <name>             name of the result archive"
+    echo "  -p | --archive-prefix-name <prefix>    prefix prepended to the auto-generated archive name"
     echo "  -c | --ceph-config-file <file>         ceph configuration file"
     echo "  -d | --archive-dir <dir>               directory to store result archive"
     echo "  -h | --help                            print this help and exit"
@@ -572,7 +573,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o a:c:d:hm:qr:t:uvC:D:G:M:O:T:V --long archive-name:,archive-dir:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
+OPTIONS=$(getopt -o a:c:d:hm:p:qr:t:uvC:D:G:M:O:T:V --long archive-name:,archive-dir:,archive-prefix-name:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -587,6 +588,10 @@ while true; do
             ;;
 	-a|--archive-name)
 	    ARCHIVE_NAME="$2"
+	    shift 2
+	    ;;
+	-p|--archive-prefix-name)
+	    ARCHIVE_PREFIX_NAME="$2"
 	    shift 2
 	    ;;
         -c|--ceph-config-file)
@@ -692,9 +697,9 @@ if `which timeout > /dev/null 2>&1`; then
     RADOSGW_ADMIN="timeout ${verbose_opt} ${RADOSGW_ADMIN_TIMEOUT} ${RADOSGW_ADMIN}"
 fi
 
-if [ -n "${ARCHIVE_NAME}" -o -n "${ARCHIVE_DIR}" ]; then
+if [ -n "${ARCHIVE_NAME}" -o -n "${ARCHIVE_DIR}" -o -n "${ARCHIVE_PREFIX_NAME}" ]; then
     if [ -n "${RESULTS_DIR}" ]; then
-        echo "Cannot use both --results-dir and --archive-name|dir" \
+        echo "Cannot use both --results-dir and --archive-name|dir|prefix" \
              "options simultaneously" >&2
         exit 1
     fi
@@ -710,7 +715,7 @@ if [ -n "${ARCHIVE_NAME}" -o -n "${ARCHIVE_DIR}" ]; then
         fi
         mkdir "${RESULTS_DIR}"
     else
-        RESULTS_DIR=$(mktemp -d "${ARCHIVE_DIR}/ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX")
+        RESULTS_DIR=$(mktemp -d "${ARCHIVE_DIR}/${ARCHIVE_PREFIX_NAME}ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX")
     fi
 elif [ -n "${RESULTS_DIR}" ]; then
     echo "WARNING: --results-dir option is deprecated, please use" \

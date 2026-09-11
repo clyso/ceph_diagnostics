@@ -436,9 +436,10 @@ get_fs_info() {
 
     info "collecting fs info ..."
 
-    store ${t}-ls     ${CEPH} fs ls
-    store ${t}-status ${CEPH} fs status
-    store ${t}-dump   ${CEPH} fs dump
+    store ${t}-ls         ${CEPH} fs ls
+    store ${t}-status     ${CEPH} fs status
+    store ${t}-dump       ${CEPH} fs dump
+    store ${t}-perf_stats ${CEPH} fs perf stats
 
     mdss=$(show_stored ${t}-dump |
            sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p')
@@ -715,7 +716,7 @@ if [ -n "${ARCHIVE_NAME}" -o -n "${ARCHIVE_DIR}" -o -n "${ARCHIVE_PREFIX_NAME}" 
         fi
         mkdir "${RESULTS_DIR}"
     else
-        RESULTS_DIR=$(mktemp -d "${ARCHIVE_DIR}/${ARCHIVE_PREFIX_NAME}ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX")
+        RESULTS_DIR=$(mktemp -d "${ARCHIVE_DIR}/${ARCHIVE_PREFIX_NAME}ceph-collect_$(date +%Y%m%d_%H%M%S)-XXX")
     fi
 elif [ -n "${RESULTS_DIR}" ]; then
     echo "WARNING: --results-dir option is deprecated, please use" \
@@ -727,7 +728,7 @@ elif [ -n "${RESULTS_DIR}" ]; then
     fi
     mkdir "${RESULTS_DIR}"
 else
-    RESULTS_DIR=$(mktemp -d /tmp/ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX)
+    RESULTS_DIR=$(mktemp -d /tmp/ceph-collect_$(date +%Y%m%d_%H%M%S)-XXX)
 fi
 mkdir  "${RESULTS_DIR}"/COMMANDS
 

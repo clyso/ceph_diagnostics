@@ -299,6 +299,7 @@ get_health_info() {
     store    ${t}-crash_ls        ${CEPH} crash ls
     store    ${t}-balancer-status ${CEPH} balancer status
     store -s ${t}-service-status  ${CEPH} service status
+    store -S ${t}-cluster_log     ${CEPH} log last 10000 cluster
 
     if [ "${CRASH_LAST_DAYS}" -gt 0 ]; then
         oldest=$(date -d "-${CRASH_LAST_DAYS} days" +%F)
@@ -541,6 +542,10 @@ get_fs_info() {
     store_tell -s "${mdss}" ${t} config_show        config show
     store_tell -s "${mdss}" ${t} damage_ls          damage ls
     store_tell -s "${mdss}" ${t} dump_blocked_ops   dump_blocked_ops
+    store_tell -s "${mdss}" ${t} dump_historic_ops_by_duration \
+                                                    dump_historic_ops_by_duration
+    store_tell -s "${mdss}" ${t} objecter_requests  objecter_requests
+    store_tell -s "${mdss}" ${t} perf_schema        perf schema
 
     # A standby-replay daemon has its own cache and perf counters and is the
     # one that takes over, so it is worth the few read-only commands it

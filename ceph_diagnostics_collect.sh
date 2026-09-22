@@ -9,6 +9,8 @@ CEPH="${CEPH:-ceph}"
 RADOS="${RADOS:-rados}"
 CEPH_CONFIG_FILE="${CEPH_CONFIG_FILE:-/etc/ceph/ceph.conf}"
 CEPH_TIMEOUT="${CEPH_TIMEOUT:-10}"
+MAX_PARALLEL="${MAX_PARALLEL:-100}"
+CURL_TIMEOUT="${CURL_TIMEOUT:-30}"
 QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
 RADOSGW_ADMIN_TIMEOUT="${RADOSGW_ADMIN_TIMEOUT:-60}"
@@ -41,6 +43,8 @@ usage()
     echo "  -q | --query-inactive-pg               query inactive pg"
     echo "  -r | --results-dir <dir>               directory to store result"
     echo "                                         (deprecated, use -d and -a instead)"
+    echo "  -P | --max-parallel <N>                max concurrent daemon queries"
+    echo "                                         (default ${MAX_PARALLEL})"
     echo "  -t | --timeout <sec>                   timeout for ceph operations"
     echo "  -u | --uncensored                      don't hide sensitive data"
     echo "  -v | --verbose                         be verbose"
@@ -193,9 +197,18 @@ store_tell() {
     local t="$1"; shift
     local name="$1"; shift
     local d
+    local n=0
 
+    # Bounded: one ceph CLI per daemon is a python process of its own, and an
+    # unbounded fan-out over a large cluster is one of them per daemon at once
+    # on the admin node and on the mons.
     for d in ${daemons}; do
 	store ${opt} ${t}-${d}-${name} ${CEPH} tell ${d} "$@" &
+	n=$((n + 1))
+	if [ ${n} -ge ${MAX_PARALLEL} ]; then
+	    wait
+	    n=0
+	fi
     done
     wait
 }
@@ -541,7 +554,11 @@ get_prometheus_info() {
 
     show_stored ${t}-file_sd_config | jq -r '.[].targets[]' | sort -u |
     while read target; do
-        store -S ${t}-${target}-metrics curl http://${target}/metrics
+        # every other command here is wrapped in timeout(1); an unreachable
+        # exporter would otherwise hang the whole collection
+        store -S ${t}-${target}-metrics \
+              curl -sS --connect-timeout 5 --max-time ${CURL_TIMEOUT} \
+                   http://${target}/metrics
     done
 }
 
@@ -622,7 +639,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o a:c:d:hm:p:qr:t:uvC:D:G:M:O:T:V --long archive-name:,archive-dir:,archive-prefix-name:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
+OPTIONS=$(getopt -o a:c:d:hm:p:qr:t:uvC:D:G:M:O:P:T:V --long archive-name:,archive-dir:,archive-prefix-name:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,max-parallel:,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -651,6 +668,10 @@ while true; do
 	    ARCHIVE_DIR="$2"
 	    shift 2
 	    ;;
+        -P|--max-parallel)
+            MAX_PARALLEL="$2"
+            shift 2
+            ;;
         -m|--asok-stats-max-osds)
             ASOK_STATS_MAX_OSDS="$2"
             shift 2
@@ -717,6 +738,12 @@ done
 
 if ! [ "${CEPH_TIMEOUT}" -gt 0 ]; then
     echo "Invalid ceph timeout: ${CEPH_TIMEOUT}" >&2
+    usage >&2
+    exit 1
+fi
+
+if ! [ "${MAX_PARALLEL}" -gt 0 ]; then
+    echo "Invalid max parallel: ${MAX_PARALLEL}" >&2
     usage >&2
     exit 1
 fi

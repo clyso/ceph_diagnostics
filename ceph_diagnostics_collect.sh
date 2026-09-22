@@ -9,6 +9,9 @@ CEPH="${CEPH:-ceph}"
 RADOS="${RADOS:-rados}"
 CEPH_CONFIG_FILE="${CEPH_CONFIG_FILE:-/etc/ceph/ceph.conf}"
 CEPH_TIMEOUT="${CEPH_TIMEOUT:-10}"
+CEPH_TELL_TIMEOUT="${CEPH_TELL_TIMEOUT:-120}"
+MAX_PARALLEL="${MAX_PARALLEL:-8}"
+CURL_TIMEOUT="${CURL_TIMEOUT:-30}"
 QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
 RADOSGW_ADMIN_TIMEOUT="${RADOSGW_ADMIN_TIMEOUT:-60}"
@@ -41,6 +44,8 @@ usage()
     echo "  -q | --query-inactive-pg               query inactive pg"
     echo "  -r | --results-dir <dir>               directory to store result"
     echo "                                         (deprecated, use -d and -a instead)"
+    echo "  -P | --max-parallel <N>                max concurrent daemon queries"
+    echo "                                         (default ${MAX_PARALLEL})"
     echo "  -t | --timeout <sec>                   timeout for ceph operations"
     echo "  -u | --uncensored                      don't hide sensitive data"
     echo "  -v | --verbose                         be verbose"
@@ -49,6 +54,8 @@ usage()
     echo "  -G | --mgr-perf-reset-and-sleep <sec>  reset mgr perf counters and sleep"
     echo "  -M | --mon-perf-reset-and-sleep <sec>  reset mon perf counters and sleep"
     echo "  -O | --osd-perf-reset-and-sleep <sec>  reset osd perf counters and sleep"
+    echo "  -L | --tell-timeout <sec>              timeout for daemon (tell) operations"
+    echo "                                         (default ${CEPH_TELL_TIMEOUT})"
     echo "  -T | --radosgw-admin-timeout <sec>     timeout radosgw-admin operations"
     echo
 }
@@ -193,9 +200,18 @@ store_tell() {
     local t="$1"; shift
     local name="$1"; shift
     local d
+    local n=0
 
+    # Bounded: one ceph CLI per daemon is a python process of its own, and an
+    # unbounded fan-out over a hundred OSDs is a hundred of them at once on
+    # the admin node and on the mons.
     for d in ${daemons}; do
-	store ${opt} ${t}-${d}-${name} ${CEPH} tell ${d} "$@" &
+	store ${opt} ${t}-${d}-${name} ${CEPH_TELL} tell ${d} "$@" &
+	n=$((n + 1))
+	if [ ${n} -ge ${MAX_PARALLEL} ]; then
+	    wait
+	    n=0
+	fi
     done
     wait
 }
@@ -536,7 +552,11 @@ get_prometheus_info() {
 
     show_stored ${t}-file_sd_config | jq -r '.[].targets[]' | sort -u |
     while read target; do
-        store -S ${t}-${target}-metrics curl http://${target}/metrics
+        # every other command here is wrapped in timeout(1); an unreachable
+        # exporter would otherwise hang the whole collection
+        store -S ${t}-${target}-metrics \
+              curl -sS --connect-timeout 5 --max-time ${CURL_TIMEOUT} \
+                   http://${target}/metrics
     done
 }
 
@@ -617,7 +637,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o a:c:d:hm:p:qr:t:uvC:D:G:M:O:T:V --long archive-name:,archive-dir:,archive-prefix-name:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
+OPTIONS=$(getopt -o a:c:d:hm:p:qr:t:uvC:D:G:L:M:O:P:T:V --long archive-name:,archive-dir:,archive-prefix-name:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,max-parallel:,query-inactive-pg,results-dir:,tell-timeout:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -646,6 +666,14 @@ while true; do
 	    ARCHIVE_DIR="$2"
 	    shift 2
 	    ;;
+        -P|--max-parallel)
+            MAX_PARALLEL="$2"
+            shift 2
+            ;;
+        -L|--tell-timeout)
+            CEPH_TELL_TIMEOUT="$2"
+            shift 2
+            ;;
         -m|--asok-stats-max-osds)
             ASOK_STATS_MAX_OSDS="$2"
             shift 2
@@ -716,6 +744,18 @@ if ! [ "${CEPH_TIMEOUT}" -gt 0 ]; then
     exit 1
 fi
 
+if ! [ "${CEPH_TELL_TIMEOUT}" -gt 0 ]; then
+    echo "Invalid tell timeout: ${CEPH_TELL_TIMEOUT}" >&1
+    usage >&2
+    exit 1
+fi
+
+if ! [ "${MAX_PARALLEL}" -gt 0 ]; then
+    echo "Invalid max parallel: ${MAX_PARALLEL}" >&1
+    usage >&2
+    exit 1
+fi
+
 if [ "${VERBOSE}" = Y ]; then
     set -x
 fi
@@ -730,6 +770,13 @@ CEPH="${CEPH} --conf=${CEPH_CONFIG_FILE} --connect-timeout=${CEPH_TIMEOUT}"
 RADOS="${RADOS} --conf=${CEPH_CONFIG_FILE}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN} --conf=${CEPH_CONFIG_FILE}"
 
+# Daemon queries get their own, longer timeout: `tell mds.X session ls` on a
+# cluster with tens of thousands of sessions does not finish in the seconds a
+# mon command needs, and a command killed halfway leaves an empty file.
+# Both wrappers are built from the unwrapped command, or the shorter inner
+# timeout would be the one that fires.
+CEPH_TELL="${CEPH}"
+
 # use timeout(1) when running cli commands if it is available
 if `which timeout > /dev/null 2>&1`; then
     # use verbose option if it is available
@@ -737,6 +784,7 @@ if `which timeout > /dev/null 2>&1`; then
     if `timeout -v 10 true /dev/null 2>&1`; then
         verbose_opt=-v
     fi
+    CEPH_TELL="timeout ${verbose_opt} ${CEPH_TELL_TIMEOUT} ${CEPH}"
     CEPH="timeout ${verbose_opt} $((CEPH_TIMEOUT * 2)) ${CEPH}"
     RADOSGW_ADMIN="timeout ${verbose_opt} ${RADOSGW_ADMIN_TIMEOUT} ${RADOSGW_ADMIN}"
 fi

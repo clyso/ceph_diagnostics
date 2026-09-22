@@ -302,6 +302,9 @@ get_health_info() {
     store    ${t}-crash_ls        ${CEPH} crash ls
     store    ${t}-balancer-status ${CEPH} balancer status
     store -s ${t}-service-status  ${CEPH} service status
+    # the cluster log is the timeline that explains when the health checks
+    # and the slow ops actually happened
+    store -S ${t}-cluster_log     ${CEPH} log last 10000 cluster
 
     if [ "${CRASH_LAST_DAYS}" -gt 0 ]; then
         oldest=$(date -d "-${CRASH_LAST_DAYS} days" +%F)
@@ -532,6 +535,15 @@ get_fs_info() {
     store_tell -s "${mdss}" ${t} config_show        config show
     store_tell -s "${mdss}" ${t} damage_ls          damage ls
     store_tell -s "${mdss}" ${t} dump_blocked_ops   dump_blocked_ops
+    # by duration, not only by time: the slow ops are the point
+    store_tell -s "${mdss}" ${t} dump_historic_ops_by_duration \
+                                                    dump_historic_ops_by_duration
+    # what the MDS is waiting for in the metadata pool - the difference
+    # between a slow MDS and slow OSDs underneath it
+    store_tell -s "${mdss}" ${t} objecter_requests  objecter_requests
+    # counter names differ between releases; the schema says what the
+    # collected perf dump actually contains
+    store_tell -s "${mdss}" ${t} perf_schema        perf schema
 
     # A standby-replay daemon has its own cache and perf counters and is the
     # one that takes over, so it is worth the few read-only commands it
@@ -543,6 +555,27 @@ get_fs_info() {
         store_tell -s "${standby_mdss}" ${t} dump_mempools dump_mempools
         store_tell -s "${standby_mdss}" ${t} config_diff   config diff
     fi
+
+    # The value each daemon is really running with. `config show` only lists
+    # what differs from the defaults, so the option a tuning decision turns
+    # on is usually absent from it.
+    for d in ${mdss} ${standby_mdss}; do
+        store ${t}-${d}-config_show_with_defaults \
+              ${CEPH} config show-with-defaults ${d}
+    done
+
+    # The metadata pool the MDS journals and dentries live in: an MDS is
+    # never faster than the pool underneath it.
+    show_stored ${t}-ls.json |
+    jq -r '.[]? | select(.metadata_pool) | .name + " " + .metadata_pool' \
+        2>/dev/null |
+    while read fs pool; do
+        [ -n "${pool}" ] || continue
+        store    ${t}-${fs}-get          ${CEPH} fs get ${fs}
+        store    ${t}-${pool}-pool_get   ${CEPH} osd pool get ${pool} all
+        store    ${t}-${pool}-pool_stats ${CEPH} osd pool stats ${pool}
+        store -c ${t}-${pool}-pg_ls      ${CEPH} pg ls-by-pool ${pool}
+    done
 
     store_messanger_info "${mdss}" ${t}
 }

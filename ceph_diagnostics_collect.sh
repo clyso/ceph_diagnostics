@@ -159,15 +159,24 @@ store() {
 
     local name=$1; shift;
     local log_name="${name}.log"
+    local rc=0
+    local json_rc=-
 
     "$@" > "${RESULTS_DIR}/${name}" 2> "${RESULTS_DIR}/${log_name}"
+    rc=$?
 
     if [ ${skip_json} -eq 0 ]; then
 	"$@" -f json > "${RESULTS_DIR}/${name}.json" 2>> \
 	     "${RESULTS_DIR}/${log_name}"
+        json_rc=$?
     elif [ ${skip_json} -eq 1 ]; then
 	ln -sr "${RESULTS_DIR}/${name}" "${RESULTS_DIR}/${name}.json"
     fi
+
+    # A command that failed leaves an empty file, which looks exactly like a
+    # command that had nothing to report. Record the outcome so the archive
+    # can say which is which without grepping every .log by hand.
+    echo "${rc} ${json_rc} ${name}" >> "${RESULTS_DIR}/COLLECT_STATUS"
 
     # TODO: remove this when all tools are updated to use *.json files only.
     if [ $json_file_compat -eq 1 ]; then
@@ -531,6 +540,40 @@ get_prometheus_info() {
     done
 }
 
+#
+# report_status: what did not come back. An archive from a customer is
+# usually the only chance to notice that half the mds data is missing, so
+# the summary goes both to the operator and into the archive.
+#
+report_status() {
+    local status="${RESULTS_DIR}/COLLECT_STATUS"
+    local summary="${RESULTS_DIR}/COLLECT_SUMMARY"
+    local failed total
+
+    [ -f "${status}" ] || return 0
+
+    total=$(wc -l < "${status}")
+    failed=$(awk '$1 != 0 || ($2 != "-" && $2 != 0)' "${status}" | wc -l)
+
+    {
+        echo "collected ${total} commands, ${failed} did not succeed"
+        if [ "${failed}" -gt 0 ]; then
+            echo ""
+            echo "rc  json_rc  name"
+            awk '$1 != 0 || ($2 != "-" && $2 != 0) {
+                     printf "%-3s %-8s %s\n", $1, $2, $3 }' "${status}"
+            echo ""
+            echo "the stderr of each is in <name>.log"
+        fi
+    } > "${summary}"
+
+    info ""
+    cat "${summary}" >&2
+    info ""
+
+    return 0
+}
+
 archive_result() {
     local result_archive compress
 
@@ -749,5 +792,7 @@ get_radosgw_admin_info
 get_orch_info
 get_rados_info
 get_prometheus_info
+
+report_status
 
 archive_result

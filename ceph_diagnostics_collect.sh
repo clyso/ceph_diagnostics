@@ -9,6 +9,9 @@ CEPH="${CEPH:-ceph}"
 RADOS="${RADOS:-rados}"
 CEPH_CONFIG_FILE="${CEPH_CONFIG_FILE:-/etc/ceph/ceph.conf}"
 CEPH_TIMEOUT="${CEPH_TIMEOUT:-10}"
+MAX_PARALLEL="${MAX_PARALLEL:-100}"
+JSON_ONLY="${JSON_ONLY:-N}"
+CURL_TIMEOUT="${CURL_TIMEOUT:-30}"
 QUERY_INACTIVE_PG="${QUERY_INACTIVE_PG:-N}"
 RADOSGW_ADMIN="${RADOSGW_ADMIN:-radosgw-admin}"
 RADOSGW_ADMIN_TIMEOUT="${RADOSGW_ADMIN_TIMEOUT:-60}"
@@ -41,6 +44,13 @@ usage()
     echo "  -q | --query-inactive-pg               query inactive pg"
     echo "  -r | --results-dir <dir>               directory to store result"
     echo "                                         (deprecated, use -d and -a instead)"
+    echo "  -j | --json-only                       only collect the json rendering of"
+    echo "                                         cluster commands (halves their load;"
+    echo "                                         the plain name becomes a symlink to"
+    echo "                                         the json, so text parsing tools may"
+    echo "                                         not work on the result)"
+    echo "  -P | --max-parallel <N>                max concurrent daemon queries"
+    echo "                                         (default ${MAX_PARALLEL})"
     echo "  -t | --timeout <sec>                   timeout for ceph operations"
     echo "  -u | --uncensored                      don't hide sensitive data"
     echo "  -v | --verbose                         be verbose"
@@ -159,15 +169,33 @@ store() {
 
     local name=$1; shift;
     local log_name="${name}.log"
+    local rc=0
+    local json_rc=-
 
-    "$@" > "${RESULTS_DIR}/${name}" 2> "${RESULTS_DIR}/${log_name}"
+    if [ ${skip_json} -eq 0 ] && [ "${JSON_ONLY}" = Y ]; then
+        # only the json rendering: the plain one costs a second run of the
+        # same command against the cluster
+        "$@" -f json > "${RESULTS_DIR}/${name}.json" 2> "${RESULTS_DIR}/${log_name}"
+        json_rc=$?
+        ln -sr "${RESULTS_DIR}/${name}.json" "${RESULTS_DIR}/${name}"
+        rc=${json_rc}
+    else
+        "$@" > "${RESULTS_DIR}/${name}" 2> "${RESULTS_DIR}/${log_name}"
+        rc=$?
 
-    if [ ${skip_json} -eq 0 ]; then
-	"$@" -f json > "${RESULTS_DIR}/${name}.json" 2>> \
-	     "${RESULTS_DIR}/${log_name}"
-    elif [ ${skip_json} -eq 1 ]; then
-	ln -sr "${RESULTS_DIR}/${name}" "${RESULTS_DIR}/${name}.json"
+        if [ ${skip_json} -eq 0 ]; then
+	    "$@" -f json > "${RESULTS_DIR}/${name}.json" 2>> \
+	         "${RESULTS_DIR}/${log_name}"
+            json_rc=$?
+        elif [ ${skip_json} -eq 1 ]; then
+	    ln -sr "${RESULTS_DIR}/${name}" "${RESULTS_DIR}/${name}.json"
+        fi
     fi
+
+    # A command that failed leaves an empty file, which looks exactly like a
+    # command that had nothing to report. Record the outcome so the archive
+    # can say which is which without grepping every .log by hand.
+    echo "${rc} ${json_rc} ${name}" >> "${RESULTS_DIR}/COLLECT_STATUS"
 
     # TODO: remove this when all tools are updated to use *.json files only.
     if [ $json_file_compat -eq 1 ]; then
@@ -184,9 +212,18 @@ store_tell() {
     local t="$1"; shift
     local name="$1"; shift
     local d
+    local n=0
 
+    # Bounded: one ceph CLI per daemon is a python process of its own, and an
+    # unbounded fan-out over a large cluster is one of them per daemon at once
+    # on the admin node and on the mons.
     for d in ${daemons}; do
 	store ${opt} ${t}-${d}-${name} ${CEPH} tell ${d} "$@" &
+	n=$((n + 1))
+	if [ ${n} -ge ${MAX_PARALLEL} ]; then
+	    wait
+	    n=0
+	fi
     done
     wait
 }
@@ -250,7 +287,7 @@ get_ceph_info() {
 
 get_health_info() {
     local t=cluster_health
-    local id oldest
+    local id ids oldest
 
     info "collecting cluster health info ..."
 
@@ -262,14 +299,21 @@ get_health_info() {
     store    ${t}-crash_ls        ${CEPH} crash ls
     store    ${t}-balancer-status ${CEPH} balancer status
     store -s ${t}-service-status  ${CEPH} service status
+    store -S ${t}-cluster_log     ${CEPH} log last 10000 cluster
 
     if [ "${CRASH_LAST_DAYS}" -gt 0 ]; then
         oldest=$(date -d "-${CRASH_LAST_DAYS} days" +%F)
     else
         oldest=''
     fi
-    show_stored ${t}-crash_ls | grep -o '^[0-9][^ ]*' |
-    while read id; do
+    # from the json: with --json-only the plain name is the json too, and
+    # the text table the fallback parses is never written
+    ids=$(show_stored ${t}-crash_ls.json |
+          jq -r '.[]?.crash_id // empty' 2>/dev/null)
+    if [ -z "${ids}" ]; then
+        ids=$(show_stored ${t}-crash_ls | grep -o '^[0-9][^ ]*')
+    fi
+    for id in ${ids}; do
         test "${id}" '<' "${oldest}" && continue
         store -s ${t}-crash_info_${id} ${CEPH} crash info ${id}
     done
@@ -286,7 +330,13 @@ get_monitor_info() {
     store -s ${t}-map      ${CEPH} mon getmap
     store -s ${t}-metadata ${CEPH} mon metadata
 
-    mons=$(show_stored ${t}-dump | sed -nEe 's/^.* (mon\.[^; ]*).*$/\1/p')
+    # from the json: the text rendering is a display format that has changed
+    # between releases, and it is not what --json-only leaves behind
+    mons=$(show_stored ${t}-dump.json |
+           jq -r '.mons[]? | "mon." + .name' 2>/dev/null)
+    if [ -z "${mons}" ]; then
+        mons=$(show_stored ${t}-dump | sed -nEe 's/^.* (mon\.[^; ]*).*$/\1/p')
+    fi
 
     if [ "${RESET_MON_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${mons}" ${t} perf_reset perf reset all
@@ -363,21 +413,32 @@ get_osd_info() {
     store    ${t}-perf      		${CEPH} osd perf
     store    ${t}-osd-pool-stats    ${CEPH} osd pool stats	
 
-    show_stored ${t}-crushmap | store ${t}-crushmap.txt crushtool -d -
+    # not a ceph command: crushtool has no -f json, so no json run for it
+    show_stored ${t}-crushmap | store -S ${t}-crushmap.txt crushtool -d -
 
     # Sort osds by weight and collect stats for up to ASOK_STATS_MAX_OSDS
-    # of every class with highest weight.
-    # The sort and awk commands below parse lines like this:
+    # of every class with highest weight. The text fallback below parses
+    # lines like this:
     #
     #   99    ssd     0.21799          osd.99               up   1.00000  1.00000
     #
-    osds=$(show_stored ${t}-tree | sort -nrk 3 |
-           awk -v max_osds=${ASOK_STATS_MAX_OSDS} '
-               n[$2] < max_osds && $5 == "up" && $6 > 0.1 {
-                   print $4;
-                   n[$2]++;
-               }'
-         )
+    osds=$(show_stored ${t}-tree.json |
+           jq -r --argjson max "${ASOK_STATS_MAX_OSDS}" '
+               [.nodes[]? |
+                select(.type == "osd" and .status == "up" and
+                       (.reweight // 0) > 0.1)] |
+               sort_by(-(.crush_weight // 0)) |
+               group_by(.device_class // "unknown") |
+               map(.[0:$max]) | flatten | .[].name' 2>/dev/null)
+    if [ -z "${osds}" ]; then
+        osds=$(show_stored ${t}-tree | sort -nrk 3 |
+               awk -v max_osds=${ASOK_STATS_MAX_OSDS} '
+                   n[$2] < max_osds && $5 == "up" && $6 > 0.1 {
+                       print $4;
+                       n[$2]++;
+                   }'
+             )
+    fi
 
     if [ "${RESET_OSD_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${osds}" ${t} perf_reset perf reset all
@@ -432,7 +493,7 @@ get_mds_info() {
 
 get_fs_info() {
     local t=fs_info
-    local mdss
+    local mdss standby_mdss
 
     info "collecting fs info ..."
 
@@ -440,8 +501,26 @@ get_fs_info() {
     store ${t}-status ${CEPH} fs status
     store ${t}-dump   ${CEPH} fs dump
 
-    mdss=$(show_stored ${t}-dump |
-           sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p')
+    # served by the stats mgr module, which is not enabled by default
+    if show_stored manager_info-ls-modules.json |
+       jq -e '.enabled_modules | index("stats")' > /dev/null 2>&1; then
+        store -s ${t}-perf_stats ${CEPH} fs perf stats
+    fi
+
+    # from the json rather than the text rendering, and standby-replay is
+    # discovered too: it has its own cache and perf counters, and it is the
+    # daemon that takes over
+    mdss=$(show_stored ${t}-dump.json |
+           jq -r '.filesystems[]?.mdsmap.info[]? |
+                  select(.state == "up:active") | "mds." + .name' 2>/dev/null)
+    if [ -z "${mdss}" ]; then
+        mdss=$(show_stored ${t}-dump |
+               sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p')
+    fi
+    standby_mdss=$(show_stored ${t}-dump.json |
+           jq -r '.filesystems[]?.mdsmap.info[]? |
+                  select(.state == "up:standby-replay") | "mds." + .name' \
+           2>/dev/null)
 
     if [ "${RESET_MDS_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${mdss}" ${t} perf_reset perf reset all
@@ -463,6 +542,21 @@ get_fs_info() {
     store_tell -s "${mdss}" ${t} config_show        config show
     store_tell -s "${mdss}" ${t} damage_ls          damage ls
     store_tell -s "${mdss}" ${t} dump_blocked_ops   dump_blocked_ops
+    store_tell -s "${mdss}" ${t} dump_historic_ops_by_duration \
+                                                    dump_historic_ops_by_duration
+    store_tell -s "${mdss}" ${t} objecter_requests  objecter_requests
+    store_tell -s "${mdss}" ${t} perf_schema        perf schema
+
+    # A standby-replay daemon has its own cache and perf counters and is the
+    # one that takes over, so it is worth the few read-only commands it
+    # answers. The active-only ones (sessions, subtrees, loads) are skipped.
+    if [ -n "${standby_mdss}" ]; then
+        store_tell -s "${standby_mdss}" ${t} cache_status  cache status
+        store_tell -s "${standby_mdss}" ${t} perf_dump     perf dump
+        store_tell -s "${standby_mdss}" ${t} status        status
+        store_tell -s "${standby_mdss}" ${t} dump_mempools dump_mempools
+        store_tell -s "${standby_mdss}" ${t} config_diff   config diff
+    fi
 
     store_messanger_info "${mdss}" ${t}
 }
@@ -526,8 +620,46 @@ get_prometheus_info() {
 
     show_stored ${t}-file_sd_config | jq -r '.[].targets[]' | sort -u |
     while read target; do
-        store -S ${t}-${target}-metrics curl http://${target}/metrics
+        # every other command here is wrapped in timeout(1); an unreachable
+        # exporter would otherwise hang the whole collection
+        store -S ${t}-${target}-metrics \
+              curl -sS --connect-timeout 5 --max-time ${CURL_TIMEOUT} \
+                   http://${target}/metrics
     done
+}
+
+#
+# report_status: what did not come back. An archive from a customer is
+# usually the only chance to notice that half the mds data is missing, so
+# the summary goes both to the operator and into the archive.
+#
+report_status() {
+    local status="${RESULTS_DIR}/COLLECT_STATUS"
+    local summary="${RESULTS_DIR}/COLLECT_SUMMARY"
+    local failed total
+
+    [ -f "${status}" ] || return 0
+
+    total=$(wc -l < "${status}")
+    failed=$(awk '$1 != 0 || ($2 != "-" && $2 != 0)' "${status}" | wc -l)
+
+    {
+        echo "collected ${total} commands, ${failed} did not succeed"
+        if [ "${failed}" -gt 0 ]; then
+            echo ""
+            echo "rc  json_rc  name"
+            awk '$1 != 0 || ($2 != "-" && $2 != 0) {
+                     printf "%-3s %-8s %s\n", $1, $2, $3 }' "${status}"
+            echo ""
+            echo "the stderr of each is in <name>.log"
+        fi
+    } > "${summary}"
+
+    info ""
+    cat "${summary}" >&2
+    info ""
+
+    return 0
 }
 
 archive_result() {
@@ -573,7 +705,7 @@ archive_result() {
 # Main
 #
 
-OPTIONS=$(getopt -o a:c:d:hm:p:qr:t:uvC:D:G:M:O:T:V --long archive-name:,archive-dir:,archive-prefix-name:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
+OPTIONS=$(getopt -o a:c:d:hjm:p:qr:t:uvC:D:G:M:O:P:T:V --long archive-name:,archive-dir:,archive-prefix-name:,asok-stats-max-osds:,ceph-config-file:,crash-last-days:,help,json-only,max-parallel:,query-inactive-pg,results-dir:,timeout:,uncensored,verbose,mds-perf-reset-and-sleep:,mgr-perf-reset-and-sleep:,mon-perf-reset-and-sleep:,osd-perf-reset-and-sleep:,radosgw-admin-timeout:,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -602,6 +734,14 @@ while true; do
 	    ARCHIVE_DIR="$2"
 	    shift 2
 	    ;;
+        -j|--json-only)
+            JSON_ONLY=Y
+            shift
+            ;;
+        -P|--max-parallel)
+            MAX_PARALLEL="$2"
+            shift 2
+            ;;
         -m|--asok-stats-max-osds)
             ASOK_STATS_MAX_OSDS="$2"
             shift 2
@@ -659,7 +799,7 @@ while true; do
             break
             ;;
         *)
-            echo "Invalid option: $1" >&1
+            echo "Invalid option: $1" >&2
             usage >&2
             exit 1
             ;;
@@ -667,7 +807,13 @@ while true; do
 done
 
 if ! [ "${CEPH_TIMEOUT}" -gt 0 ]; then
-    echo "Invalid ceph timeout: ${CEPH_TIMEOUT}" >&1
+    echo "Invalid ceph timeout: ${CEPH_TIMEOUT}" >&2
+    usage >&2
+    exit 1
+fi
+
+if ! [ "${MAX_PARALLEL}" -gt 0 ]; then
+    echo "Invalid max parallel: ${MAX_PARALLEL}" >&2
     usage >&2
     exit 1
 fi
@@ -715,7 +861,7 @@ if [ -n "${ARCHIVE_NAME}" -o -n "${ARCHIVE_DIR}" -o -n "${ARCHIVE_PREFIX_NAME}" 
         fi
         mkdir "${RESULTS_DIR}"
     else
-        RESULTS_DIR=$(mktemp -d "${ARCHIVE_DIR}/${ARCHIVE_PREFIX_NAME}ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX")
+        RESULTS_DIR=$(mktemp -d "${ARCHIVE_DIR}/${ARCHIVE_PREFIX_NAME}ceph-collect_$(date +%Y%m%d_%H%M%S)-XXX")
     fi
 elif [ -n "${RESULTS_DIR}" ]; then
     echo "WARNING: --results-dir option is deprecated, please use" \
@@ -727,7 +873,7 @@ elif [ -n "${RESULTS_DIR}" ]; then
     fi
     mkdir "${RESULTS_DIR}"
 else
-    RESULTS_DIR=$(mktemp -d /tmp/ceph-collect_$(date +%Y%m%d_%H%I%S)-XXX)
+    RESULTS_DIR=$(mktemp -d /tmp/ceph-collect_$(date +%Y%m%d_%H%M%S)-XXX)
 fi
 mkdir  "${RESULTS_DIR}"/COMMANDS
 
@@ -748,5 +894,7 @@ get_radosgw_admin_info
 get_orch_info
 get_rados_info
 get_prometheus_info
+
+report_status
 
 archive_result

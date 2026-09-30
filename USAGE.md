@@ -57,3 +57,9 @@ bucket-18                                                  15,526         17    
 bucket-19                                                 478,856         37            7.98          12,942.05
 bucket-20                                                  15,939         17            5.99             937.59
 ```
+
+# fs perf stats in collect
+
+`ceph_diagnostics_collect.sh` also stores a `fs perf stats` snapshot
+(`fs_info-perf_stats`) for client-level workload analysis in collected
+archives, when the `stats` mgr module is enabled.

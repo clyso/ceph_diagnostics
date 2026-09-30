@@ -659,7 +659,7 @@ while true; do
             break
             ;;
         *)
-            echo "Invalid option: $1" >&1
+            echo "Invalid option: $1" >&2
             usage >&2
             exit 1
             ;;
@@ -667,7 +667,7 @@ while true; do
 done
 
 if ! [ "${CEPH_TIMEOUT}" -gt 0 ]; then
-    echo "Invalid ceph timeout: ${CEPH_TIMEOUT}" >&1
+    echo "Invalid ceph timeout: ${CEPH_TIMEOUT}" >&2
     usage >&2
     exit 1
 fi

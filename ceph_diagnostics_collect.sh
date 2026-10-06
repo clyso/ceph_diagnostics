@@ -599,6 +599,7 @@ get_orch_info() {
     store    ${t}-host-ls-detail ${CEPH} orch host ls --detail
     store    ${t}-osd-rm-status ${CEPH} orch osd rm status
     store    ${t}-client-keyring-ls ${CEPH} orch client-keyring ls
+    store    ${t}-device-ls ${CEPH} orch device ls
 }
 
 get_rados_info() {

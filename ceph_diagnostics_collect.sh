@@ -75,13 +75,40 @@ version() {
     md5sum "$(command -v $0)" | cut -d' ' -f1
 }
 
+# Option names whose value is a secret. Besides the RGW/dashboard keys and
+# passwords this covers tokens (rgw_keystone_admin_token, ...) and the RGW
+# STS and SSE encryption keys, but not *_token_ttl, *_token_file, ... that
+# only hold settings or paths.
+CENSOR_OPTION_RE='ACCESS_KEY|SECRET_KEY|PASSWORD|_TOKEN$|_STS_KEY$|_ENCRYPTION_KEYS?$'
+
+# Secrets embedded in an option value whatever the option name, e.g. the
+# dashboard JWT tokens stored in mgr/dashboard/MULTICLUSTER_CONFIG: JSON
+# "token"/"password"/... members, and anything that looks like a JWT.
+censor_values() {
+    sed -e "s/\(\"\(token\|password\|secret_key\|access_key\)\"\s*:\s*\)\"[^\"]*\"/\1\"${CENSORED}\"/gi" \
+        -e "s/eyJ[A-Za-z0-9_-]\+\.[A-Za-z0-9_-]\+\.[A-Za-z0-9_-]\+/${CENSORED}/g"
+}
+
+# jq counterparts of CENSOR_OPTION_RE and censor_values.
+JQ_CENSOR_DEFS='
+def is_secret_option: test($re; "i");
+def censor_values:
+    gsub("(?<k>\"(token|password|secret_key|access_key)\"\\s*:\\s*)\"[^\"]*\"";
+         "\(.k)\"" + $c + "\""; "i")
+  | gsub("eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"; $c);
+def censor_strings: walk(if type == "string" then censor_values else . end);
+'
+
 censor_config() {
     if [ -z "${CENSORED}" ]; then
         "$@"
         return
     fi
 
-    "$@" | sed "s/\(ACCESS_KEY\|SECRET_KEY\|PASSWORD\)\(\s*\).*/\1\2${CENSORED}/gi"
+    "$@" | sed -e "s/\(ACCESS_KEY\|SECRET_KEY\|PASSWORD\)\(\s*\).*/\1\2${CENSORED}/gi" \
+               -e "s/\(_TOKEN\|_STS_KEY\|_ENCRYPTION_KEYS\?\)\([[:space:]=]\+\).*/\1\2${CENSORED}/gi" \
+               -e "s/\( TOKEN\| STS KEY\| ENCRYPTION KEYS\?\)\(\s*=\s*\).*/\1\2${CENSORED}/gi" |
+        censor_values
 }
 
 censor_config_json() {
@@ -90,9 +117,12 @@ censor_config_json() {
         return
     fi
 
-    "$@" | jq 'map(if (.name | test("ACCESS_KEY|SECRET_KEY|PASSWORD"; "i"))
-                   then .value = "'"${CENSORED}"'"
-                   else . end)'
+    "$@" | jq --arg c "${CENSORED}" --arg re "${CENSOR_OPTION_RE}" \
+              "${JQ_CENSOR_DEFS}"'
+              map(if (.name | is_secret_option)
+                  then .value = $c
+                  else . end)
+              | censor_strings'
 }
 
 censor_config_log_json() {
@@ -101,16 +131,19 @@ censor_config_log_json() {
         return
     fi
 
-    "$@" | jq 'map(
+    "$@" | jq --arg c "${CENSORED}" --arg re "${CENSOR_OPTION_RE}" \
+              "${JQ_CENSOR_DEFS}"'
+              map(
                 .changes |= map(
-                  if (.name | test("ACCESS_KEY|SECRET_KEY|PASSWORD"; "i"))
+                  if (.name | is_secret_option)
                   then
-                    .previous_value = "'"${CENSORED}"'"
-                   |.new_value = "'"${CENSORED}"'"
+                    .previous_value = $c
+                   |.new_value = $c
                   else .
                   end
                  )
-               )'
+               )
+              | censor_strings'
 }
 
 censor_auth() {

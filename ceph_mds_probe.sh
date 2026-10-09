@@ -81,6 +81,7 @@ DO_DAEMONPERF="${DO_DAEMONPERF:-N}"
 SSH_OPTS="${SSH_OPTS:-}"
 SPACE_CHECK="${SPACE_CHECK:-Y}"
 FORCE="${FORCE:-N}"
+QUALITY_STRICT="${QUALITY_STRICT:-N}"
 ACTION=run
 RUN_DIR="${RUN_DIR:-}"
 CURRENT_LINK=""
@@ -1241,9 +1242,35 @@ expected_interval() {
     esac
 }
 
+# scan_records: reads a JSONL stream, prints "records errors invalid
+# first_t last_t". Every record starts with the prefix record_json writes,
+# {"ts":"..","t":N,["mds":"..",]["rc":N,]..., so error records and the
+# sample time are read off the prefix by awk, without parsing the
+# payload; a line without that prefix or without the closing brace (a
+# record cut short) is not JSON. QUALITY_STRICT=Y parses every record
+# with jq instead, which also catches invalid JSON inside the payload,
+# at about four times the cost.
+scan_records() {
+    if [ "${QUALITY_STRICT}" = Y ]; then
+        jq -R -r 'try (fromjson | if has("rc") then "E \(.t // 0)" else "O \(.t // 0)" end)
+                  catch "X"' 2>/dev/null |
+        awk '$1 == "X" { x++; next }
+             { n++; if ($1 == "E") e++; if (!first) first = $2; last = $2 }
+             END { printf "%d %d %d %d %d\n", n + x, e, x, first, last }'
+    else
+        awk '!/^[{]"ts":"[^"]*","t":[0-9]+,/ || !/[}]$/ { x++; next }
+             { n++
+               if ($0 ~ /^[{]"ts":"[^"]*","t":[0-9]+,("mds":"[^"]*",)?"rc":/) e++
+               match($0, /"t":[0-9]+/)
+               t = substr($0, RSTART + 4, RLENGTH - 4) + 0
+               if (!first) first = t; last = t }
+             END { printf "%d %d %d %d %d\n", n + x, e, x, first, last }'
+    fi
+}
+
 quality_report() {
     local f base tot err snap interval elapsed want covered bad=0
-    local start end
+    local start end invalid t_first t_last nfs note
 
     start=$(pi_get start)
     end=$(pi_get end)
@@ -1257,11 +1284,20 @@ quality_report() {
     echo
     printf '%-44s %9s %9s %9s\n' stream records errors expected
 
+    # one record per filesystem and round
+    nfs=$(grep -c . "${RUN_DIR}/run/fs-list" 2>/dev/null)
+    [ "${nfs}" -gt 0 ] 2>/dev/null || nfs=1
+
     for f in "${RUN_DIR}"/*.jsonl; do
         [ -e "${f}" ] || continue
         base=$(basename "${f}")
-        tot=$(wc -l < "${f}")
-        err=$(grep -c '"rc":' "${f}")
+        # one pass: records, error records, lines that are not JSON at
+        # all (they count as errors: the analyzer cannot read them), and
+        # the first and last sample time
+        read -r tot err invalid t_first t_last <<EOF
+$(scan_records < "${f}")
+EOF
+        err=$((err + invalid))
         interval=$(expected_interval "${base}")
         want=""
         if [ -n "${interval}" ] && [ "${interval}" -gt 0 ] 2>/dev/null &&
@@ -1269,13 +1305,17 @@ quality_report() {
             # measure against the window the stream itself covers, not
             # against the whole run: a rank that only became active
             # halfway through is not missing the first half
-            covered=$(( $(tail -1 "${f}" | jq -r '.t // 0') -
-                        $(head -1 "${f}" | jq -r '.t // 0') ))
+            covered=$((t_last - t_first))
             [ "${covered}" -gt 0 ] 2>/dev/null || covered=0
             want=$((covered / interval + 1))
+            case "${base}" in
+                fs-status*) want=$((want * nfs)) ;;
+            esac
         fi
-        printf '%-44s %9s %9s %9s%s\n' "${base}" "${tot}" "${err}" "${want:--}" \
-               "$([ "${err}" -gt 0 ] && echo '  <-- CHECK')"
+        note=""
+        [ "${err}" -gt 0 ] && note='  <-- CHECK'
+        [ "${invalid}" -gt 0 ] && note="${note} (${invalid} not JSON)"
+        printf '%-44s %9s %9s %9s%s\n' "${base}" "${tot}" "${err}" "${want:--}" "${note}"
         [ "${err}" -gt 0 ] && bad=1
         # less than half the expected samples means a stream was
         # starved, e.g. by a hung tell running into --tell-timeout
@@ -1286,15 +1326,24 @@ quality_report() {
         fi
     done
 
+    # text streams: one snapshot per "===" header (per top refresh for
+    # the host streams), one error per "!!! rc=" line
     for f in "${RUN_DIR}"/*.log; do
         [ -e "${f}" ] || continue
         base=$(basename "${f}")
-        snap=$(grep -c '^===' "${f}" 2>/dev/null)
-        if [ "${snap}" -gt 0 ]; then
-            printf '%-44s %9s %9s %9s\n' "${base}" "${snap}" "-" "-"
-        else
-            printf '%-44s %9s %9s %9s\n' "${base}" "$(wc -l < "${f}")" "-" "-"
+        case "${base}" in
+            # without strftime ts_prefix is cat and a line starts with "top - "
+            host-*)       snap=$(grep -cE '(^| )top - ' "${f}" 2>/dev/null) ;;
+            daemonperf-*) snap=$(grep -c . "${f}" 2>/dev/null) ;;
+            *)            snap=$(grep -c '^===' "${f}" 2>/dev/null) ;;
+        esac
+        err=$(grep -c '!!! rc=' "${f}" 2>/dev/null)
+        note=""
+        if [ "${err}" -gt 0 ] || [ "${snap}" -eq 0 ]; then
+            note='  <-- CHECK'
+            bad=1
         fi
+        printf '%-44s %9s %9s %9s%s\n' "${base}" "${snap}" "${err}" "-" "${note}"
     done
 
     if [ -s "${RUN_DIR}/meta/errors.log" ]; then
@@ -1316,6 +1365,7 @@ quality_report() {
         echo "WARNING: some streams have error records or are short of samples."
         echo "inspect them with:"
         echo "  jq -r 'select(.rc) | .error' <file>.jsonl | sort | uniq -c | sort -rn | head"
+        echo "  grep '!!! rc=' <file>.log | sort | uniq -c | sort -rn | head"
     fi
     return ${bad}
 }
@@ -1835,8 +1885,9 @@ collect_meta_final
 cleanup
 rm -rf "${RUN_DIR}/run/tmp"
 
-quality_report | tee "${RUN_DIR}/meta/quality-report.txt"
+quality_report > "${RUN_DIR}/meta/quality-report.txt"
 QUALITY_RC=$?
+cat "${RUN_DIR}/meta/quality-report.txt"
 
 info "done"
 info "result: ${RUN_DIR}"
@@ -1844,4 +1895,6 @@ if [ "${ARCHIVE}" = Y ]; then
     archive_result
 fi
 
-exit 0
+# non-zero when the quality report found something to check, so a
+# wrapper can tell a clean collection from one that needs a look
+exit ${QUALITY_RC}

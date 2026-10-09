@@ -202,6 +202,13 @@ usage()
 
 info() {
     echo "$*" >&2
+    # also into the run directory: the estimate, the warnings and the
+    # reason of a stop have to travel with the archive, not only with
+    # whatever file the caller redirected stderr to
+    if [ -n "${RUN_DIR}" ] && [ -d "${RUN_DIR}/run" ]; then
+        echo "$(now_iso) $*" >> "${RUN_DIR}/run/probe.log"
+    fi
+    return 0
 }
 
 log() {

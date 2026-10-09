@@ -579,6 +579,18 @@ mds_host() {
         jq -r '.hostname // empty' 2>/dev/null
 }
 
+# host_addr <host>: the address cephadm itself connects to; the bare
+# hostname does not always resolve from the admin node. Falls back to the
+# hostname when the orchestrator does not know the host.
+host_addr() {
+    local addr
+
+    addr=$(${CEPH} orch host ls -f json 2>/dev/null |
+           jq -r --arg h "$1" '.[] | select(.hostname == $h) | .addr // empty' 2>/dev/null |
+           head -1)
+    echo "${addr:-$1}"
+}
+
 #
 # Discovery
 #
@@ -706,21 +718,22 @@ collect_mds_meta() {
 
 collect_host_meta() {
     local d="$1"
-    local host
+    local host addr
 
     host=$(mds_host "${d}")
     if [ -z "${host}" ]; then
         echo "$(now_iso) cannot resolve host of ${d}" >> "${RUN_DIR}/meta/errors.log"
         return 1
     fi
-    echo "${host}" > "${RUN_DIR}/run/host-${d}"
+    addr=$(host_addr "${host}")
+    echo "${addr}" > "${RUN_DIR}/run/host-${d}"
 
-    remote_sh "${host}" 'hostname -f; uname -r; nproc;
+    remote_sh "${addr}" 'hostname -f; uname -r; nproc;
         lscpu 2>/dev/null | grep -E "Model name|Socket|NUMA node\(s\)|Thread|MHz";
         cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null;
         free -g; uptime' \
         > "${RUN_DIR}/meta/host-info-${d}.txt" 2>&1 ||
-        info "WARNING: ${d} host ${host} not reachable over ssh," \
+        info "WARNING: ${d} host ${host} (${addr}) not reachable over ssh," \
              "host samplers will retry every ${REMOTE_RETRY}s"
     return 0
 }
@@ -1041,12 +1054,64 @@ ts_prefix() {
     fi
 }
 
-# Per-thread CPU on the MDS host. ceph-mds concentrates its work in a
-# few threads, so whether ms_dispatch/MDSRank is pinned at 100% is the
-# evidence that decides whether more ranks would help at all.
+# Per-thread CPU of the MDS daemon. ceph-mds concentrates its work in a
+# few threads, so whether ms_dispatch is pinned at 100% is the evidence
+# that decides whether more ranks would help at all.
+#
+# top is limited to the daemon's own pid: hosts commonly run several MDS
+# daemons, and a host-wide thread list cannot be told apart per daemon.
+# -w 512 because without a tty top cuts every line at 80 columns, which
+# truncates the thread names to 8 characters (ms_disp+). Kept per
+# snapshot: the header lines, every thread with CPU time in the interval
+# and the threads in HOST_THREADS even when idle. top is restarted every
+# 10 minutes so a restarted daemon is picked up under its new pid.
+#
+# MDS thread names, from the sources of 15.2 to 20.2 (the renames were
+# backported: reef 18.2.5, squid 19.2.3):
+#
+#   up to reef 18.2.4 / squid 19.2.2    reef 18.2.5+ / squid 19.2.3+ / tentacle
+#   MR_Finisher                         mds-rank-fin
+#   PQ_Finisher                         mds-pq-fin
+#   md_submit                           mds-log-submit
+#   md_log_replay                       mds-log-replay
+#   md_recov_open / md_recov_reopen     mds-log-recvr / mds-log-reopen
+#   mds_rank_progr                      mds-rank-progr
+#   quiesce.agt / quiesce_db_mgr        mds-q-agt / mds-q-db (squid+)
+#   (unnamed, see below)                mds-cache-trim, mds-beacon,
+#                                       mds-metrics, mds-ping
+#   -                                   mds-log-trim (squid 19.2.3+)
+#
+# Before the renames, the cache trimming (MDCache upkeep), metrics and
+# ping threads had no name of their own and inherited the name of the
+# thread that started them: ms_dispatch (MDSRank is built while handling
+# the mdsmap) or MR_Finisher, and ceph-mds for the beacon. On those
+# releases an ms_dispatch thread at 100% may well be the cache trimming
+# one: the real dispatcher is the oldest ms_dispatch thread. So every
+# session starts with a "=== threads" line listing the daemon's threads
+# as tid:start-time-in-ticks:name, for the analyzer to tell them apart.
+HOST_THREADS='ms_dispatch|ms_local|OpHistorySvc|safe_timer|fn_anonymous|msgr-worker-[0-9]+|log|ceph-mds'
+HOST_THREADS="${HOST_THREADS}|MR_Finisher|PQ_Finisher|md_submit|md_log_replay|md_recov_open|md_recov_reopen|mds_rank_progr"
+HOST_THREADS="${HOST_THREADS}|quiesce.agt|quiesce_db_mgr"
+HOST_THREADS="${HOST_THREADS}|mds-rank-fin|mds-pq-fin|mds-log-submit|mds-log-replay|mds-log-recvr|mds-log-reopen|mds-rank-progr"
+HOST_THREADS="${HOST_THREADS}|mds-cache-trim|mds-beacon|mds-metrics|mds-ping|mds-log-trim|mds-q-agt|mds-q-db"
+
+host_remote_cmd() {
+    local d="$1"
+
+    printf '%s' "P=\$(pgrep -f -- '^(/usr/bin/)?ceph-mds -n ${d}( |\$)' | head -1);" \
+        " if [ -z \"\$P\" ]; then echo \"!!! rc=2: no ceph-mds process for ${d} on \$(hostname)\"; exit 2; fi;" \
+        " echo \"=== ${d} pid \$P on \$(hostname) ===\";" \
+        " printf '=== threads'; for T in /proc/\$P/task/*; do" \
+        " printf ' %s:%s:%s' \"\${T##*/}\" \"\$(sed 's/.*) //' \$T/stat 2>/dev/null | cut -d' ' -f20)\" \"\$(cat \$T/comm 2>/dev/null)\";" \
+        " done; echo;" \
+        " top -b -H -w 512 -d 5 -n 120 -p \"\$P\" |" \
+        " awk '/^(top|Threads|%Cpu|MiB)/ { print; fflush(); next }" \
+        " \$9 + 0 > 0 || \$12 ~ /^(${HOST_THREADS})\$/ { print; fflush() }'"
+}
+
 host_sampler() {
     local d="$1"
-    local host t0
+    local host t0 rest
 
     trap stop_sampler TERM
     while running; do
@@ -1060,14 +1125,17 @@ host_sampler() {
             continue
         fi
         t0=$(date +%s)
-        timeout 3700 ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+        timeout 700 ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
             -o LogLevel=ERROR ${SSH_CONFIG_OPT} ${SSH_IDENT_OPT} ${SSH_OPTS} \
-            -l "${SSH_USER}" "${host}" \
-            "top -b -H -d 5 -n 720 | grep --line-buffered -E '^top|Cpu|MiB Mem|Swap|ceph-mds|ms_dispatch|MDSRank|safe_timer|fn_anonymous|md_log_replay|OpHistorySvc|mds-log-flush|journal_write'" \
+            -l "${SSH_USER}" "${host}" "$(host_remote_cmd "${d}")" \
             2>&1 | ts_prefix >> "$(stream_file host "${d}").log" &
         wait $!
         # a run that ends within 30s is a connection failure, not data
-        if [ $(($(date +%s) - t0)) -lt 30 ]; then
+        rest=$(($(date +%s) - t0))
+        if [ ${rest} -lt 30 ]; then
+            running &&
+                echo "$(now_iso) !!! rc=1: remote sampler on ${host} ended after ${rest}s, retrying in ${REMOTE_RETRY}s" \
+                    >> "$(stream_file host "${d}").log"
             nap "${REMOTE_RETRY}"
         else
             nap 2
@@ -1192,8 +1260,9 @@ estimate_volume() {
     total=$((total + $(per_day "${HEALTH_INTERVAL}"    4096         1)))
     [ "${nosd}" -gt 0 ] &&
         total=$((total + $(per_day "${OSD_INTERVAL}" 8192 "${nosd}")))
+    # ~2 KiB per 5 s top snapshot of one daemon
     [ "${USE_SSH}" = Y ] &&
-        total=$((total + 20000000 * nmds))
+        total=$((total + 40000000 * nmds))
 
     if [ "${DURATION}" -gt 0 ]; then
         days=$(((DURATION + 86399) / 86400))

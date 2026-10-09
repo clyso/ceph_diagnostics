@@ -309,6 +309,12 @@ json_finite() {
         -e 'ta'
 }
 
+# err_msg <file>: the start of a command's stderr, without the messenger
+# chatter of the ceph CLI (ms_handle_reset ...) that would hide the error
+err_msg() {
+    grep -v 'ms_handle_reset' "$1" 2>/dev/null | head -c 500 | tr -d '\000'
+}
+
 record_json() {
     local out="$1"; shift
     local mds="$1"; shift
@@ -343,7 +349,7 @@ record_json() {
         fi >> "${out}"
     else
         msg=""
-        [ -n "${err}" ] && msg=$(head -c 500 "${err}" 2>/dev/null | tr -d '\000')
+        [ -n "${err}" ] && msg=$(err_msg "${err}")
         [ -n "${msg}" ] || msg=$(printf '%s' "${raw}" | head -c 500)
         [ -n "${msg}" ] || msg="no output"
         msg=$(printf '%s' "${msg}" | jq -Rs . 2>/dev/null)
@@ -361,15 +367,27 @@ record_json() {
 }
 
 # record_text <outfile> <label> <cmd>...: snapshot with a header, for
-# the commands that have no json formatter
+# the commands that have no json formatter. stderr is not mixed into the
+# data (the ceph CLI prints messenger chatter there on every call); a
+# failed command adds a "!!! rc=<n>: <stderr>" line that the quality
+# report counts as an error.
 record_text() {
     local out="$1"; shift
     local label="$1"; shift
+    local err rc msg
 
+    err=$(mktemp "${RUN_DIR}/run/tmp/err.XXXXXX" 2>/dev/null) || err=""
     {
         echo "=== $(now_iso) ${label} ==="
-        PYTHONUNBUFFERED=1 "$@"
-    } >> "${out}" 2>&1
+        PYTHONUNBUFFERED=1 "$@" 2>"${err:-/dev/null}"
+        rc=$?
+        if [ ${rc} -ne 0 ]; then
+            msg=""
+            [ -n "${err}" ] && msg=$(err_msg "${err}" | tr '\n' ' ')
+            echo "!!! rc=${rc}: ${msg:-no output}"
+        fi
+    } >> "${out}"
+    [ -n "${err}" ] && rm -f "${err}"
     return 0
 }
 

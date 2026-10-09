@@ -23,7 +23,7 @@
 #                               effective MDS options, perf schemas, errors,
 #                               quality-report
 #   fs-perf-stats.<day>.jsonl   per-client workload snapshots (30s)
-#   fs-status.<day>.jsonl       per-rank req/s, cache and standby list (60s)
+#   fs-status-<fs>.<day>.jsonl  per-rank req/s, cache and standby list (60s)
 #   health.<day>.jsonl          cluster health detail (300s)
 #   perf-<mds>.<day>.jsonl      raw perf counters (5s)
 #   objecter-<mds>.<day>.jsonl  MDS -> OSD requests in flight (60s)
@@ -37,9 +37,17 @@
 #   host-<mds>.<day>.log        per-thread CPU on the MDS host (--ssh)
 #   daemonperf-<mds>.<day>.log  daemonperf on the MDS host (--daemonperf)
 #
-# Data files carry the local date and roll over at midnight. A sample
-# that fails is recorded as {"ts","t","mds","rc","error"} instead of
-# being dropped, so a gap in a stream is always explained.
+# Data files carry the local date and roll over at midnight. The file
+# name is taken when a sample starts, so a file can end with a few
+# records from just after midnight: order the records by "t", not by
+# file. A sample that fails is recorded as {"ts","t","mds","rc","error"}
+# instead of being dropped, so a gap in a stream is always explained.
+#
+# Unless --no-compress, every data file is gzipped as it is written
+# (<file>.gz): each record, snapshot or remote session is appended as
+# one more gzip member, so what is on disk is always readable (zcat,
+# gzip.open) and a crash loses at most the record being written. The
+# files are repacked as single gzip streams before the archive is made.
 #
 # --ssh uses the cephadm SSH identity (ceph cephadm get-user /
 # get-ssh-config / config-key get mgr/cephadm/ssh_identity_key); the
@@ -73,13 +81,15 @@ TAG="${TAG:-}"
 FS="${FS:-}"
 SKIP_SESSIONS="${SKIP_SESSIONS:-N}"
 ENABLE_STATS_MODULE="${ENABLE_STATS_MODULE:-N}"
-ARCHIVE="${ARCHIVE:-N}"
+ARCHIVE="${ARCHIVE:-Y}"
+COMPRESS="${COMPRESS:-Y}"
 VERBOSE="${VERBOSE:-N}"
 USE_SSH="${USE_SSH:-N}"
 PLAIN_SSH="${PLAIN_SSH:-N}"
 DO_DAEMONPERF="${DO_DAEMONPERF:-N}"
 SSH_OPTS="${SSH_OPTS:-}"
 SPACE_CHECK="${SPACE_CHECK:-Y}"
+MIN_FREE_PCT="${MIN_FREE_PCT:-10}"
 FORCE="${FORCE:-N}"
 ACTION=run
 RUN_DIR="${RUN_DIR:-}"
@@ -183,12 +193,18 @@ usage()
     echo "      --plain-ssh                 use the invoking user's ssh identity"
     echo "                                  instead of the cephadm one"
     echo "      --archive                   pack the run directory into a tar.gz"
-    echo "                                  on exit (the directory is kept)"
+    echo "                                  on exit (the directory is kept;"
+    echo "                                  this is the default)"
+    echo "      --no-archive                do not pack the run directory on exit"
+    echo "      --no-compress               write the data files uncompressed"
+    echo "                                  (default: gzip them as they are written)"
     echo "      --enable-stats-module       enable the mgr stats module if it is"
     echo "                                  off (needed for fs perf stats);"
     echo "                                  restored on exit"
     echo "      --no-space-check            do not estimate the data volume and"
-    echo "                                  check the free space before starting"
+    echo "                                  check the free space before starting,"
+    echo "                                  nor stop when --out-dir runs below"
+    echo "                                  MIN_FREE_PCT% free (default ${MIN_FREE_PCT})"
     echo "      --force                     start even if the estimated data"
     echo "                                  volume does not fit in --out-dir"
     echo "      --stop                      stop the running probe in --out-dir"
@@ -202,6 +218,13 @@ usage()
 
 info() {
     echo "$*" >&2
+    # also into the run directory: the estimate, the warnings and the
+    # reason of a stop have to travel with the archive, not only with
+    # whatever file the caller redirected stderr to
+    if [ -n "${RUN_DIR}" ] && [ -d "${RUN_DIR}/run" ]; then
+        echo "$(now_iso) $*" >> "${RUN_DIR}/run/probe.log"
+    fi
+    return 0
 }
 
 log() {
@@ -274,6 +297,43 @@ run_parallel() {
     wait
 }
 
+# append <file>: stdin to the end of <file>, or with compression to
+# <file>.gz as one more gzip member: concatenated members are a single
+# valid gzip stream. One writer per file: gzip writes a member in more
+# than one write(2), so two writers would interleave them.
+append() {
+    if [ "${COMPRESS}" = Y ]; then
+        gzip -c >> "$1.gz"
+    else
+        cat >> "$1"
+    fi
+}
+
+# append_stream <file> [<regex>]: append() for the output of a long
+# lived remote command. gzip holds its output until it has enough to
+# write, so a 10 minute top session piped into one gzip would leave
+# nothing on disk until the session ends: the stream would look empty to
+# --status and a killed probe would lose the whole session. A new member
+# is started at every line matching <regex> (a new top snapshot) and
+# every 60 lines at the latest.
+append_stream() {
+    if [ "${COMPRESS}" = Y ]; then
+        awk -v out="$1.gz" -v pat="$2" '
+            BEGIN { gsub(/\047/, "\047\\\047\047", out); cmd = "gzip -c >> \047" out "\047" }
+            n && ((pat != "" && $0 ~ pat) || n >= 60) { close(cmd); n = 0 }
+            { print | cmd; n++ }
+            END { close(cmd) }'
+    else
+        cat >> "$1"
+    fi
+}
+
+# rd <file>: a data file's content, compressed or not. A last member cut
+# short (a writer killed mid-record) yields what precedes it.
+rd() {
+    gzip -dcf "$1" 2>/dev/null
+}
+
 # stream_file <base> [<name>]: data file for a stream, dated so files
 # roll over at midnight
 stream_file() {
@@ -297,6 +357,24 @@ stream_file() {
 #
 RECORD_JSON_RC=0
 
+# json_finite: Ceph's JSON formatter prints non-finite doubles bare
+# (`dump loads` has "halflife":-inf), which is not JSON. jq 1.6 accepts
+# them and writes -DBL_MAX, which is not JSON either (every record of the
+# stream is lost to the analyzer); jq 1.7 rejects the whole reply. Turn
+# them into null before jq sees them. One value per pass, so that
+# adjacent ones ([inf,inf]) are all caught.
+json_finite() {
+    sed -E -e ':a' \
+        -e 's/(:|,|\[)([[:space:]]*)-?(inf|nan)([[:space:]]*([],}]|$))/\1\2null\4/' \
+        -e 'ta'
+}
+
+# err_msg <file>: the start of a command's stderr, without the messenger
+# chatter of the ceph CLI (ms_handle_reset ...) that would hide the error
+err_msg() {
+    grep -v 'ms_handle_reset' "$1" 2>/dev/null | head -c 500 | tr -d '\000'
+}
+
 record_json() {
     local out="$1"; shift
     local mds="$1"; shift
@@ -319,7 +397,8 @@ record_json() {
 
     # normalize to a single line (some builds pretty-print or emit
     # leading whitespace)
-    if [ ${rc} -eq 0 ] && json=$(printf '%s' "${raw}" | jq -c "${filter}" 2>/dev/null) &&
+    if [ ${rc} -eq 0 ] &&
+       json=$(printf '%s' "${raw}" | json_finite | jq -c "${filter}" 2>/dev/null) &&
        [ -n "${json}" ]; then
         record_rc=0
         if [ "${mds}" = "-" ]; then
@@ -327,10 +406,10 @@ record_json() {
         else
             printf '{"ts":"%s","t":%s,"mds":"%s","data":%s}\n' \
                    "${ts}" "${t}" "${mds}" "${json}"
-        fi >> "${out}"
+        fi | append "${out}"
     else
         msg=""
-        [ -n "${err}" ] && msg=$(head -c 500 "${err}" 2>/dev/null | tr -d '\000')
+        [ -n "${err}" ] && msg=$(err_msg "${err}")
         [ -n "${msg}" ] || msg=$(printf '%s' "${raw}" | head -c 500)
         [ -n "${msg}" ] || msg="no output"
         msg=$(printf '%s' "${msg}" | jq -Rs . 2>/dev/null)
@@ -341,22 +420,34 @@ record_json() {
         else
             printf '{"ts":"%s","t":%s,"mds":"%s","rc":%s,"error":%s}\n' \
                    "${ts}" "${t}" "${mds}" "${rc}" "${msg}"
-        fi >> "${out}"
+        fi | append "${out}"
     fi
     [ -n "${err}" ] && rm -f "${err}"
     return ${record_rc}
 }
 
 # record_text <outfile> <label> <cmd>...: snapshot with a header, for
-# the commands that have no json formatter
+# the commands that have no json formatter. stderr is not mixed into the
+# data (the ceph CLI prints messenger chatter there on every call); a
+# failed command adds a "!!! rc=<n>: <stderr>" line that the quality
+# report counts as an error.
 record_text() {
     local out="$1"; shift
     local label="$1"; shift
+    local err rc msg
 
+    err=$(mktemp "${RUN_DIR}/run/tmp/err.XXXXXX" 2>/dev/null) || err=""
     {
         echo "=== $(now_iso) ${label} ==="
-        PYTHONUNBUFFERED=1 "$@"
-    } >> "${out}" 2>&1
+        PYTHONUNBUFFERED=1 "$@" 2>"${err:-/dev/null}"
+        rc=$?
+        if [ ${rc} -ne 0 ]; then
+            msg=""
+            [ -n "${err}" ] && msg=$(err_msg "${err}" | tr '\n' ' ')
+            echo "!!! rc=${rc}: ${msg:-no output}"
+        fi
+    } | append "${out}"
+    [ -n "${err}" ] && rm -f "${err}"
     return 0
 }
 
@@ -539,6 +630,18 @@ mds_host() {
         jq -r '.hostname // empty' 2>/dev/null
 }
 
+# host_addr <host>: the address cephadm itself connects to; the bare
+# hostname does not always resolve from the admin node. Falls back to the
+# hostname when the orchestrator does not know the host.
+host_addr() {
+    local addr
+
+    addr=$(${CEPH} orch host ls -f json 2>/dev/null |
+           jq -r --arg h "$1" '.[] | select(.hostname == $h) | .addr // empty' 2>/dev/null |
+           head -1)
+    echo "${addr:-$1}"
+}
+
 #
 # Discovery
 #
@@ -666,21 +769,22 @@ collect_mds_meta() {
 
 collect_host_meta() {
     local d="$1"
-    local host
+    local host addr
 
     host=$(mds_host "${d}")
     if [ -z "${host}" ]; then
         echo "$(now_iso) cannot resolve host of ${d}" >> "${RUN_DIR}/meta/errors.log"
         return 1
     fi
-    echo "${host}" > "${RUN_DIR}/run/host-${d}"
+    addr=$(host_addr "${host}")
+    echo "${addr}" > "${RUN_DIR}/run/host-${d}"
 
-    remote_sh "${host}" 'hostname -f; uname -r; nproc;
+    remote_sh "${addr}" 'hostname -f; uname -r; nproc;
         lscpu 2>/dev/null | grep -E "Model name|Socket|NUMA node\(s\)|Thread|MHz";
         cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null;
         free -g; uptime' \
         > "${RUN_DIR}/meta/host-info-${d}.txt" 2>&1 ||
-        info "WARNING: ${d} host ${host} not reachable over ssh," \
+        info "WARNING: ${d} host ${host} (${addr}) not reachable over ssh," \
              "host samplers will retry every ${REMOTE_RETRY}s"
     return 0
 }
@@ -708,6 +812,7 @@ collect_meta() {
         echo "discovery-interval: ${DISCOVERY_INTERVAL}"
         echo "ssh: ${USE_SSH}"
         echo "daemonperf: ${DO_DAEMONPERF}"
+        echo "compress: ${COMPRESS}"
         echo "host: $(hostname -f 2>/dev/null || hostname)"
         echo "ceph: $(${CEPH} version 2>/dev/null)"
         echo "fsid: ${FSID}"
@@ -800,7 +905,7 @@ sample_session_one() {
 }
 
 sample_fs_status_one() {
-    record_json "$(stream_file fs-status).jsonl" "$1" . \
+    record_json "$(stream_file fs-status "$1").jsonl" "$1" . \
         ${CEPH} fs status "$1" -f json
 }
 
@@ -928,6 +1033,17 @@ worker_discovery() {
     while running; do
         nap "${DISCOVERY_INTERVAL}"
         running || break
+
+        # the estimate is only an estimate (a busy MDS's historic ops can
+        # grow far beyond it); /var/log/ceph often shares its filesystem
+        # with the mon store, and a mon stops when that fills up
+        if [ "${SPACE_CHECK}" = Y ] && ! free_space_ok; then
+            info "WARNING: less than ${MIN_FREE_PCT}% free in ${OUT_DIR}," \
+                 "stopping the probe to protect the host"
+            rm -f "${RUN_DIR}/run/running"
+            break
+        fi
+
         mdss=$(get_active_mdss)
         if [ -z "${mdss}" ]; then
             echo "$(now_iso) no active mds found, keeping the previous set" \
@@ -1001,12 +1117,64 @@ ts_prefix() {
     fi
 }
 
-# Per-thread CPU on the MDS host. ceph-mds concentrates its work in a
-# few threads, so whether ms_dispatch/MDSRank is pinned at 100% is the
-# evidence that decides whether more ranks would help at all.
+# Per-thread CPU of the MDS daemon. ceph-mds concentrates its work in a
+# few threads, so whether ms_dispatch is pinned at 100% is the evidence
+# that decides whether more ranks would help at all.
+#
+# top is limited to the daemon's own pid: hosts commonly run several MDS
+# daemons, and a host-wide thread list cannot be told apart per daemon.
+# -w 512 because without a tty top cuts every line at 80 columns, which
+# truncates the thread names to 8 characters (ms_disp+). Kept per
+# snapshot: the header lines, every thread with CPU time in the interval
+# and the threads in HOST_THREADS even when idle. top is restarted every
+# 10 minutes so a restarted daemon is picked up under its new pid.
+#
+# MDS thread names, from the sources of 15.2 to 20.2 (the renames were
+# backported: reef 18.2.5, squid 19.2.3):
+#
+#   up to reef 18.2.4 / squid 19.2.2    reef 18.2.5+ / squid 19.2.3+ / tentacle
+#   MR_Finisher                         mds-rank-fin
+#   PQ_Finisher                         mds-pq-fin
+#   md_submit                           mds-log-submit
+#   md_log_replay                       mds-log-replay
+#   md_recov_open / md_recov_reopen     mds-log-recvr / mds-log-reopen
+#   mds_rank_progr                      mds-rank-progr
+#   quiesce.agt / quiesce_db_mgr        mds-q-agt / mds-q-db (squid+)
+#   (unnamed, see below)                mds-cache-trim, mds-beacon,
+#                                       mds-metrics, mds-ping
+#   -                                   mds-log-trim (squid 19.2.3+)
+#
+# Before the renames, the cache trimming (MDCache upkeep), metrics and
+# ping threads had no name of their own and inherited the name of the
+# thread that started them: ms_dispatch (MDSRank is built while handling
+# the mdsmap) or MR_Finisher, and ceph-mds for the beacon. On those
+# releases an ms_dispatch thread at 100% may well be the cache trimming
+# one: the real dispatcher is the oldest ms_dispatch thread. So every
+# session starts with a "=== threads" line listing the daemon's threads
+# as tid:start-time-in-ticks:name, for the analyzer to tell them apart.
+HOST_THREADS='ms_dispatch|ms_local|OpHistorySvc|safe_timer|fn_anonymous|msgr-worker-[0-9]+|log|ceph-mds'
+HOST_THREADS="${HOST_THREADS}|MR_Finisher|PQ_Finisher|md_submit|md_log_replay|md_recov_open|md_recov_reopen|mds_rank_progr"
+HOST_THREADS="${HOST_THREADS}|quiesce.agt|quiesce_db_mgr"
+HOST_THREADS="${HOST_THREADS}|mds-rank-fin|mds-pq-fin|mds-log-submit|mds-log-replay|mds-log-recvr|mds-log-reopen|mds-rank-progr"
+HOST_THREADS="${HOST_THREADS}|mds-cache-trim|mds-beacon|mds-metrics|mds-ping|mds-log-trim|mds-q-agt|mds-q-db"
+
+host_remote_cmd() {
+    local d="$1"
+
+    printf '%s' "P=\$(pgrep -f -- '^(/usr/bin/)?ceph-mds -n ${d}( |\$)' | head -1);" \
+        " if [ -z \"\$P\" ]; then echo \"!!! rc=2: no ceph-mds process for ${d} on \$(hostname)\"; exit 2; fi;" \
+        " echo \"=== ${d} pid \$P on \$(hostname) ===\";" \
+        " printf '=== threads'; for T in /proc/\$P/task/*; do" \
+        " printf ' %s:%s:%s' \"\${T##*/}\" \"\$(sed 's/.*) //' \$T/stat 2>/dev/null | cut -d' ' -f20)\" \"\$(cat \$T/comm 2>/dev/null)\";" \
+        " done; echo;" \
+        " top -b -H -w 512 -d 5 -n 120 -p \"\$P\" |" \
+        " awk '/^(top|Threads|%Cpu|MiB)/ { print; fflush(); next }" \
+        " \$9 + 0 > 0 || \$12 ~ /^(${HOST_THREADS})\$/ { print; fflush() }'"
+}
+
 host_sampler() {
     local d="$1"
-    local host t0
+    local host t0 rest
 
     trap stop_sampler TERM
     while running; do
@@ -1020,14 +1188,17 @@ host_sampler() {
             continue
         fi
         t0=$(date +%s)
-        timeout 3700 ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+        timeout 700 ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
             -o LogLevel=ERROR ${SSH_CONFIG_OPT} ${SSH_IDENT_OPT} ${SSH_OPTS} \
-            -l "${SSH_USER}" "${host}" \
-            "top -b -H -d 5 -n 720 | grep --line-buffered -E '^top|Cpu|MiB Mem|Swap|ceph-mds|ms_dispatch|MDSRank|safe_timer|fn_anonymous|md_log_replay|OpHistorySvc|mds-log-flush|journal_write'" \
-            2>&1 | ts_prefix >> "$(stream_file host "${d}").log" &
+            -l "${SSH_USER}" "${host}" "$(host_remote_cmd "${d}")" \
+            2>&1 | ts_prefix | append_stream "$(stream_file host "${d}").log" '(^| )top - ' &
         wait $!
         # a run that ends within 30s is a connection failure, not data
-        if [ $(($(date +%s) - t0)) -lt 30 ]; then
+        rest=$(($(date +%s) - t0))
+        if [ ${rest} -lt 30 ]; then
+            running &&
+                echo "$(now_iso) !!! rc=1: remote sampler on ${host} ended after ${rest}s, retrying in ${REMOTE_RETRY}s" \
+                    | append "$(stream_file host "${d}").log"
             nap "${REMOTE_RETRY}"
         else
             nap 2
@@ -1056,7 +1227,7 @@ daemonperf_sampler() {
             "stty cols 2000 rows 50 2>/dev/null; $(remote_ceph_prefix "${d}") ceph daemonperf ${d} debugonly 5 720" \
             < /dev/null 2>&1 |
             sed -u 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\r$//' 2>/dev/null |
-            ts_prefix >> "$(stream_file daemonperf "${d}").log" &
+            ts_prefix | append_stream "$(stream_file daemonperf "${d}").log" &
         wait $!
         if [ $(($(date +%s) - t0)) -lt 30 ]; then
             nap "${REMOTE_RETRY}"
@@ -1105,8 +1276,24 @@ human() {
     }'
 }
 
+# free_space_ok: at least MIN_FREE_PCT% of the --out-dir filesystem free
+free_space_ok() {
+    df -Pk "${OUT_DIR}" 2>/dev/null |
+        awk -v min="${MIN_FREE_PCT}" 'NR == 2 && $2 > 0 { exit ($4 * 100 / $2 < min) }'
+}
+
+# stored_size: bytes that stdin takes on disk, compressed as append()
+# would store it
+stored_size() {
+    if [ "${COMPRESS}" = Y ]; then
+        gzip -c | wc -c | tr -d ' '
+    else
+        wc -c | tr -d ' '
+    fi
+}
+
 sample_size() {
-    PYTHONUNBUFFERED=1 "$@" 2>/dev/null | jq -c . 2>/dev/null | wc -c | tr -d ' '
+    PYTHONUNBUFFERED=1 "$@" 2>/dev/null | jq -c . 2>/dev/null | stored_size
 }
 
 # per_day <interval> <size> [<count>] -> bytes per day
@@ -1120,9 +1307,46 @@ per_day() {
     echo $((86400 / interval * size * count))
 }
 
+# histops_size <mds>: projected size of one historic ops snapshot. The
+# history fills up to mds_op_history_size ops (1000 when the recommended
+# setting is applied right before the run, against 20 by default), at a
+# few KiB per op under load, so the size is extrapolated from the bytes
+# per op seen now rather than taken as is.
+histops_size() {
+    local d="$1"
+    local raw bytes nops hsize
+
+    raw=$(PYTHONUNBUFFERED=1 ${CEPH_TELL} tell "${d}" dump_historic_ops_by_duration 2>/dev/null)
+    bytes=$(printf '%s' "${raw}" | stored_size)
+    nops=$(printf '%s' "${raw}" | json_finite | jq '.ops | length' 2>/dev/null)
+    hsize=$(jq -r '.mds_op_history_size // empty' \
+                "${RUN_DIR}/meta/options-${d}.json" 2>/dev/null)
+    [ "${hsize}" -gt 0 ] 2>/dev/null || hsize=20
+    if [ "${nops}" -gt 0 ] 2>/dev/null; then
+        [ "${nops}" -gt "${hsize}" ] && hsize=${nops}
+        echo $((bytes / nops * hsize))
+    else
+        # empty history: assume 3 KiB per op, 150 bytes gzipped
+        if [ "${COMPRESS}" = Y ]; then
+            echo $((150 * hsize))
+        else
+            echo $((3072 * hsize))
+        fi
+    fi
+}
+
 estimate_volume() {
-    local d nmds nosd total days avail need
-    local s_perf=40000 s_sess=20000 s_fsperf=10000
+    local d nmds nosd total days avail need cz s_host
+    local s_perf=40000 s_sess=20000 s_fsperf=10000 s_hist=8192
+
+    # the small fixed-size records shrink about 3x when gzipped one by
+    # one, a 5 s top snapshot about 3.5x
+    cz=1
+    s_host=40000000
+    if [ "${COMPRESS}" = Y ]; then
+        cz=3
+        s_host=11000000
+    fi
 
     nmds=$(current_mdss | grep -c .)
     nosd=$(current_osds | grep -c .)
@@ -1136,6 +1360,10 @@ estimate_volume() {
             s_sess=$(sample_size ${CEPH_TELL} tell "${d}" session ls -f json)
             [ "${s_sess}" -gt 100 ] 2>/dev/null || s_sess=20000
         fi
+        if [ "${HISTOPS_INTERVAL}" -gt 0 ]; then
+            s_hist=$(histops_size "${d}")
+            [ "${s_hist}" -gt 100 ] 2>/dev/null || s_hist=8192
+        fi
     fi
     s_fsperf=$(sample_size ${CEPH_TELL} fs perf stats -f json)
     [ "${s_fsperf}" -gt 100 ] 2>/dev/null || s_fsperf=10000
@@ -1143,17 +1371,18 @@ estimate_volume() {
     total=0
     total=$((total + $(per_day "${PERF_INTERVAL}"      "${s_perf}"  "${nmds}")))
     total=$((total + $(per_day "${SESSION_INTERVAL}"   "${s_sess}"  "${nmds}")))
-    total=$((total + $(per_day "${OBJECTER_INTERVAL}"  2048         "${nmds}")))
-    total=$((total + $(per_day "${CACHE_INTERVAL}"     2048         "${nmds}")))
-    total=$((total + $(per_day "${HISTOPS_INTERVAL}"   8192         "${nmds}")))
-    total=$((total + $(per_day "${LOADS_INTERVAL}"     8192         "${nmds}")))
+    total=$((total + $(per_day "${OBJECTER_INTERVAL}"  $((2048 / cz)) "${nmds}")))
+    total=$((total + $(per_day "${CACHE_INTERVAL}"     $((2048 / cz)) "${nmds}")))
+    total=$((total + $(per_day "${HISTOPS_INTERVAL}"   "${s_hist}"  "${nmds}")))
+    total=$((total + $(per_day "${LOADS_INTERVAL}"     $((8192 / cz)) "${nmds}")))
     total=$((total + $(per_day "${FS_PERF_INTERVAL}"   "${s_fsperf}" 1)))
-    total=$((total + $(per_day "${FS_STATUS_INTERVAL}" 4096         1)))
-    total=$((total + $(per_day "${HEALTH_INTERVAL}"    4096         1)))
+    total=$((total + $(per_day "${FS_STATUS_INTERVAL}" $((4096 / cz)) "$(current_fses | grep -c .)")))
+    total=$((total + $(per_day "${HEALTH_INTERVAL}"    $((4096 / cz)) 1)))
     [ "${nosd}" -gt 0 ] &&
-        total=$((total + $(per_day "${OSD_INTERVAL}" 8192 "${nosd}")))
+        total=$((total + $(per_day "${OSD_INTERVAL}" $((8192 / cz)) "${nosd}")))
+    # ~2 KiB per 5 s top snapshot of one daemon
     [ "${USE_SSH}" = Y ] &&
-        total=$((total + 20000000 * nmds))
+        total=$((total + s_host * nmds))
 
     if [ "${DURATION}" -gt 0 ]; then
         days=$(((DURATION + 86399) / 86400))
@@ -1162,7 +1391,7 @@ estimate_volume() {
     fi
     need=$((total * days))
 
-    info "estimated data volume: $(human ${total})/day" \
+    info "estimated data volume$([ "${COMPRESS}" = Y ] && echo ' (gzipped)'): $(human ${total})/day" \
          "($(human ${need}) for this run, ${nmds} mds, ${nosd} metadata osd)"
     echo "estimated-bytes-per-day: ${total}" >> "${RUN_DIR}/meta/probe-info"
 
@@ -1211,7 +1440,7 @@ expected_interval() {
 
 quality_report() {
     local f base tot err snap interval elapsed want covered bad=0
-    local start end
+    local start end invalid t_first t_last note pat
 
     start=$(pi_get start)
     end=$(pi_get end)
@@ -1223,13 +1452,23 @@ quality_report() {
     echo "data quality of $(basename "${RUN_DIR}")"
     echo "window: ${start} .. ${end} (${elapsed}s)"
     echo
-    printf '%-44s %9s %9s %9s\n' stream records errors expected
+    printf '%-52s %9s %9s %9s\n' stream records errors expected
 
-    for f in "${RUN_DIR}"/*.jsonl; do
+    for f in "${RUN_DIR}"/*.jsonl "${RUN_DIR}"/*.jsonl.gz; do
         [ -e "${f}" ] || continue
         base=$(basename "${f}")
-        tot=$(wc -l < "${f}")
-        err=$(grep -c '"rc":' "${f}")
+        # one pass: records, error records, lines that are not JSON at
+        # all (they count as errors: the analyzer cannot read them), and
+        # the first and last sample time
+        read -r tot err invalid t_first t_last <<EOF
+$(rd "${f}" |
+  jq -R -r 'try (fromjson | if has("rc") then "E \(.t // 0)" else "O \(.t // 0)" end)
+            catch "X"' 2>/dev/null |
+  awk '$1 == "X" { x++; next }
+       { n++; if ($1 == "E") e++; if (!first) first = $2; last = $2 }
+       END { printf "%d %d %d %d %d\n", n + x, e, x, first, last }')
+EOF
+        err=$((err + invalid))
         interval=$(expected_interval "${base}")
         want=""
         if [ -n "${interval}" ] && [ "${interval}" -gt 0 ] 2>/dev/null &&
@@ -1237,13 +1476,14 @@ quality_report() {
             # measure against the window the stream itself covers, not
             # against the whole run: a rank that only became active
             # halfway through is not missing the first half
-            covered=$(( $(tail -1 "${f}" | jq -r '.t // 0') -
-                        $(head -1 "${f}" | jq -r '.t // 0') ))
+            covered=$((t_last - t_first))
             [ "${covered}" -gt 0 ] 2>/dev/null || covered=0
             want=$((covered / interval + 1))
         fi
-        printf '%-44s %9s %9s %9s%s\n' "${base}" "${tot}" "${err}" "${want:--}" \
-               "$([ "${err}" -gt 0 ] && echo '  <-- CHECK')"
+        note=""
+        [ "${err}" -gt 0 ] && note='  <-- CHECK'
+        [ "${invalid}" -gt 0 ] && note="${note} (${invalid} not JSON)"
+        printf '%-52s %9s %9s %9s%s\n' "${base}" "${tot}" "${err}" "${want:--}" "${note}"
         [ "${err}" -gt 0 ] && bad=1
         # less than half the expected samples means a stream was
         # starved, e.g. by a hung tell running into --tell-timeout
@@ -1254,15 +1494,27 @@ quality_report() {
         fi
     done
 
-    for f in "${RUN_DIR}"/*.log; do
+    # text streams: one snapshot per "===" header (per top refresh for
+    # the host streams), one error per "!!! rc=" line
+    for f in "${RUN_DIR}"/*.log "${RUN_DIR}"/*.log.gz; do
         [ -e "${f}" ] || continue
         base=$(basename "${f}")
-        snap=$(grep -c '^===' "${f}" 2>/dev/null)
-        if [ "${snap}" -gt 0 ]; then
-            printf '%-44s %9s %9s %9s\n' "${base}" "${snap}" "-" "-"
-        else
-            printf '%-44s %9s %9s %9s\n' "${base}" "$(wc -l < "${f}")" "-" "-"
+        # one pass over the (decompressed) file: snapshots and errors
+        case "${base}" in
+            host-*)       pat=' top - ' ;;
+            daemonperf-*) pat='.' ;;
+            *)            pat='^===' ;;
+        esac
+        read -r snap err <<EOF
+$(rd "${f}" | awk -v pat="${pat}" '$0 ~ pat { s++ } /!!! rc=/ { e++ }
+                                    END { printf "%d %d\n", s, e }')
+EOF
+        note=""
+        if [ "${err}" -gt 0 ] || [ "${snap}" -eq 0 ]; then
+            note='  <-- CHECK'
+            bad=1
         fi
+        printf '%-52s %9s %9s %9s%s\n' "${base}" "${snap}" "${err}" "-" "${note}"
     done
 
     if [ -s "${RUN_DIR}/meta/errors.log" ]; then
@@ -1283,7 +1535,8 @@ quality_report() {
     else
         echo "WARNING: some streams have error records or are short of samples."
         echo "inspect them with:"
-        echo "  jq -r 'select(.rc) | .error' <file>.jsonl | sort | uniq -c | sort -rn | head"
+        echo "  gzip -dcf <file>.jsonl.gz | jq -r 'select(.rc) | .error' | sort | uniq -c | sort -rn | head"
+        echo "  gzip -dcf <file>.log.gz | grep '!!! rc=' | sort | uniq -c | sort -rn | head"
     fi
     return ${bad}
 }
@@ -1291,8 +1544,34 @@ quality_report() {
 #
 # Packaging
 #
+
+# compact_run: written one gzip member per record, a file compresses
+# each record on its own; perf dumps repeat the same keys from one sample
+# to the next, so repacking every file as one gzip stream shrinks the run
+# by another third or so. Only for a run that has stopped: a file still
+# being appended to would lose the records written meanwhile. A file
+# whose last member was cut short is left as it is.
+compact_run() {
+    local f gz
+
+    [ -f "${RUN_DIR}/run/running" ] && return 0
+    gz=gzip
+    command -v pigz > /dev/null 2>&1 && gz="pigz -p 4"
+    for f in "${RUN_DIR}"/*.gz; do
+        [ -e "${f}" ] || continue
+        gzip -t "${f}" 2>/dev/null || continue
+        if gzip -dc "${f}" | ${gz} -6 > "${f}.tmp" && gzip -t "${f}.tmp"; then
+            touch -r "${f}" "${f}.tmp"
+            mv -f "${f}.tmp" "${f}"
+        else
+            rm -f "${f}.tmp"
+        fi
+    done
+    return 0
+}
+
 archive_result() {
-    local result_archive gz base parent
+    local result_archive gz base parent level
 
     if ! command -v tar > /dev/null 2>&1; then
         info "no tar found, keeping results in the directory only"
@@ -1304,6 +1583,7 @@ archive_result() {
     result_archive="${RUN_DIR}.tar.gz"
 
     info "archiving ${RUN_DIR} ..."
+    compact_run
 
     # manifest so the analyst can verify the transfer is complete
     {
@@ -1325,10 +1605,17 @@ archive_result() {
 
     gz=gzip
     command -v pigz > /dev/null 2>&1 && gz="pigz -p 4"
+    # gzipping data files a second time gains nothing; only the metadata
+    # is left to compress
+    level=6
+    ls "${RUN_DIR}"/*.gz > /dev/null 2>&1 && level=1
 
+    # the exit status of a pipeline is the compressor's, so the archive
+    # is read back: a tar that failed halfway is caught there
     if tar -C "${parent}" --exclude="${base}/run/running" \
            --exclude="${base}/run/tmp" -cf - "${base}" |
-       ${gz} -6 > "${result_archive}.tmp"; then
+       ${gz} -${level} > "${result_archive}.tmp" &&
+       gzip -dc "${result_archive}.tmp" | tar -tf - > /dev/null 2>&1; then
         mv -f "${result_archive}.tmp" "${result_archive}"
         (cd "${parent}" && sha256sum "$(basename "${result_archive}")" \
             > "$(basename "${result_archive}").sha256")
@@ -1510,7 +1797,7 @@ cleanup() {
 # Main
 #
 
-OPTIONS=$(getopt -o c:d:f:hi:o:s:t:T:vV --long archive,cache-interval:,ceph-config-file:,daemonperf,discovery-interval:,duration:,enable-stats-module,force,fs:,fs-perf-interval:,fs-status-interval:,health-interval:,help,histops-interval:,loads-interval:,max-parallel:,no-space-check,objecter-interval:,osd-interval:,osd-limit:,out-dir:,pack,perf-interval:,plain-ssh,run-dir:,session-interval:,skip-histops,skip-sessions,ssh,status,stop,tag:,tell-timeout:,timeout:,verbose,version -- "$@")
+OPTIONS=$(getopt -o c:d:f:hi:o:s:t:T:vV --long archive,cache-interval:,ceph-config-file:,daemonperf,discovery-interval:,duration:,enable-stats-module,force,fs:,fs-perf-interval:,fs-status-interval:,health-interval:,help,histops-interval:,loads-interval:,max-parallel:,no-archive,no-compress,no-space-check,objecter-interval:,osd-interval:,osd-limit:,out-dir:,pack,perf-interval:,plain-ssh,run-dir:,session-interval:,skip-histops,skip-sessions,ssh,status,stop,tag:,tell-timeout:,timeout:,verbose,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -1628,6 +1915,14 @@ while true; do
             ARCHIVE=Y
             shift
             ;;
+        --no-archive)
+            ARCHIVE=N
+            shift
+            ;;
+        --no-compress)
+            COMPRESS=N
+            shift
+            ;;
         --enable-stats-module)
             ENABLE_STATS_MODULE=Y
             shift
@@ -1690,6 +1985,11 @@ fi
 if ! command -v jq > /dev/null 2>&1; then
     echo "jq command not found, please install jq package" >&2
     exit 1
+fi
+
+if [ "${COMPRESS}" = Y ] && ! command -v gzip > /dev/null 2>&1; then
+    echo "gzip not found, writing the data files uncompressed" >&2
+    COMPRESS=N
 fi
 
 case "${ACTION}" in
@@ -1803,8 +2103,9 @@ collect_meta_final
 cleanup
 rm -rf "${RUN_DIR}/run/tmp"
 
-quality_report | tee "${RUN_DIR}/meta/quality-report.txt"
+quality_report > "${RUN_DIR}/meta/quality-report.txt"
 QUALITY_RC=$?
+cat "${RUN_DIR}/meta/quality-report.txt" >&2
 
 info "done"
 info "result: ${RUN_DIR}"
@@ -1812,4 +2113,6 @@ if [ "${ARCHIVE}" = Y ]; then
     archive_result
 fi
 
-exit 0
+# non-zero when the quality report found something to check, so a
+# wrapper can tell a clean collection from one that needs a look
+exit ${QUALITY_RC}

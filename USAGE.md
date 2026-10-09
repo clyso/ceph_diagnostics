@@ -98,9 +98,14 @@ things that only matter because this one runs for a day:
 
 - **The node has to stay up for the whole window**, and the run has to
   survive the terminal closing - see "Running it detached" below.
-- **Room for the data.** A collection is gigabytes where an ordinary
-  diagnostics archive is megabytes. The probe measures real samples before
-  it starts and refuses if the estimate does not fit in `-o`.
+- **Room for the data.** A collection is hundreds of megabytes to
+  gigabytes where an ordinary diagnostics archive is megabytes, even
+  gzipped as it is written: about 1 GiB a day for 10 busy ranks with
+  `mds_op_history_size` at 1000, ten times that with `--no-compress`.
+  The probe measures real samples before it starts and refuses if the
+  estimate does not fit in `-o`, and stops by itself if `-o` runs below
+  10% free while it runs (`MIN_FREE_PCT`) - `/var/log/ceph` often shares
+  its filesystem with the mon store, and a mon stops when that fills up.
 - **`--ssh` asks for a little more.** It reads the cephadm SSH identity
   (`ceph cephadm get-user`, `ceph cephadm get-ssh-config`,
   `ceph config-key get mgr/cephadm/ssh_identity_key`); the last one needs a
@@ -109,9 +114,10 @@ things that only matter because this one runs for a day:
   own ssh identity, which then has to reach the MDS hosts by itself. Run it
   on the cephadm admin host - the one where `cephadm shell` is run.
 
-Commands it needs: `ceph` and `jq` are required; `timeout`, `tar`, `pigz`
-and `pkill` are used when present; `ssh`, `ssh-agent` and `ssh-add` only
-with `--ssh`.
+Commands it needs: `ceph` and `jq` are required; `gzip`, `timeout`, `tar`,
+`pigz` and `pkill` are used when present (without `gzip` the data files
+are written uncompressed); `ssh`, `ssh-agent` and `ssh-add` only with
+`--ssh`, and `top` (procps-ng) and `pgrep` on the MDS hosts.
 
 ## Collecting a baseline
 
@@ -133,7 +139,7 @@ nohup ./ceph_mds_probe.sh \
 | `-d 86400` | 24h, to cover a whole business cycle; under 20h the caps confidence drops to MEDIUM |
 | `--ssh` | the per-thread CPU of the MDS hosts. Without it the report has to say it cannot tell a CPU-bound MDS from one that is not, which is the hardest piece of evidence the max_mds decision has |
 | `--enable-stats-module` | `fs perf stats` needs the mgr stats module; its previous state is restored on exit |
-| `--archive` | packs the run into a tar.gz with a sha256 manifest |
+| `--archive` | packs the run into a tar.gz with a sha256 manifest; this is the default, kept here so the command reads the same with older versions of the script |
 | `-o` | where the data lands, `/var/log/ceph` by default |
 
 While it runs, from any other terminal:
@@ -150,8 +156,16 @@ cat /var/log/ceph/mds-probe-current/meta/quality-report.txt
 ```
 
 `all streams clean` is the answer to look for. A `<-- CHECK` means a stream
-carries error records, and that is worth chasing while the cluster is still
-in the state that produced them.
+carries error records, lines that are not JSON, or no snapshot at all, and
+that is worth chasing while the cluster is still in the state that produced
+them. The probe also exits non-zero when the report is not clean.
+
+If the probe was killed before it could pack up (a reboot, `kill -9`), the
+run directory is still complete up to that point; pack it with:
+
+```
+./ceph_mds_probe.sh --pack
+```
 
 Then send back the two files the run printed:
 
@@ -170,6 +184,9 @@ Then send back the two files the run printed:
   a 2 minute run over four snapshots yielded 58 requests, and the
   splittability criterion wants at least 50. This is the one cluster setting
   worth changing for a collection; the probe never changes it by itself.
+  It is also what makes the historic ops the biggest stream by far: a
+  snapshot of a busy rank is a few MB, about 1 GiB per rank and day before
+  compression and some 50 MiB gzipped; the volume estimate accounts for it.
 
   ```
   ceph config set mds mds_op_history_size 1000
@@ -193,16 +210,22 @@ and the metadata pool OSDs every 300s, health detail every 300s. The run
 directory is created under `/var/log/ceph` (see `-o`); the script prints
 its path on exit, and `<out-dir>/mds-probe-current` points at it.
 
-Before it starts, the probe measures one sample of the biggest streams,
-projects the data volume of the whole run and refuses to start if that
-would use more than 80% of the free space in `-o` (`--force` overrides,
-`--no-space-check` skips the estimate).
+Before it starts, the probe measures one sample of the biggest streams
+(perf counters, sessions, fs perf stats, and historic ops extrapolated to
+`mds_op_history_size`), projects the data volume of the whole run as it
+will be stored and refuses to start if that would use more than 80% of
+the free space in `-o` (`--force` overrides). While it runs it stops
+itself, packing up as on `--stop`, when `-o` falls below `MIN_FREE_PCT`
+percent free (default 10). `--no-space-check` skips both.
 
 `--stop` clears the run's flag file, so every sampler finishes the call
 it is in the middle of instead of being killed; Ctrl-C does the same.
 On exit the probe writes `meta/quality-report.txt`: records and error
 records per stream, measured against the samples the intervals should
-have produced.
+have produced. Lines that are not JSON count as errors (the analyzer
+could not read them), and so does a text stream with a `!!! rc=` line -
+what a failed `ceph tell` leaves in place of its output - or with no
+snapshot at all.
 
 ## Host CPU (`--ssh`)
 
@@ -210,9 +233,22 @@ have produced.
 ./ceph_mds_probe.sh --tag baseline --ssh --daemonperf
 ```
 
-`--ssh` samples `top -b -H` on the MDS hosts, which is what shows
-whether `ms_dispatch`/`MDSRank` is pinned at 100% - the evidence that
-decides whether more ranks would help at all. It uses the cephadm SSH
+`--ssh` samples `top -b -H` on the MDS hosts, limited to the pid of the
+sampled daemon (hosts commonly run several MDS daemons), which is what
+shows whether `ms_dispatch` is pinned at 100% - the evidence that decides
+whether more ranks would help at all. Each 5s snapshot keeps the threads
+that used CPU and the known MDS threads even when idle; each 10 minute
+session starts with a `=== threads tid:start:name ...` line listing all
+the daemon's threads with their start time.
+
+The MDS thread names were changed in reef 18.2.5 and squid 19.2.3
+(`MR_Finisher` became `mds-rank-fin`, `md_submit` `mds-log-submit`, ...);
+the probe knows both. Before that, the cache trimming, metrics and ping
+threads had no name of their own and showed up under the name of the
+thread that started them - `ms_dispatch` for the first ones, `ceph-mds`
+for the beacon. On those releases an `ms_dispatch` at 100% may be the
+cache trimming: the dispatcher itself is the oldest `ms_dispatch` thread
+in the `=== threads` line. It uses the cephadm SSH
 identity (`ceph cephadm get-user`, `ceph cephadm get-ssh-config`,
 `ceph config-key get mgr/cephadm/ssh_identity_key`); the private key is
 loaded into an in-memory ssh-agent, or into a 0600 file on tmpfs that is
@@ -255,9 +291,11 @@ collections can be compared.
 | `--ssh` | also sample per-thread CPU (`top -b -H`) on the MDS hosts |
 | `--daemonperf` | also run `daemonperf` on the MDS hosts (implies `--ssh`) |
 | `--plain-ssh` | use the invoking user's ssh identity instead of the cephadm one |
-| `--archive` | pack the run directory into a tar.gz on exit (directory kept) |
+| `--archive` | pack the run directory into a tar.gz on exit (directory kept); the default |
+| `--no-archive` | do not pack the run directory on exit |
+| `--no-compress` | write the data files uncompressed (default: gzip them as they are written) |
 | `--enable-stats-module` | enable the mgr stats module if it is off (needed for fs perf stats); restored on exit |
-| `--no-space-check` | do not estimate the volume / check free space before starting |
+| `--no-space-check` | do not estimate the volume / check free space before starting, nor stop below `MIN_FREE_PCT`% free |
 | `--force` | start even if the estimate does not fit in `--out-dir` |
 | `--stop` / `--status` / `--pack` | stop, inspect or (re)pack the run in `-o` |
 | `--run-dir <dir>` | run directory for `--stop`/`--status`/`--pack` |
@@ -267,9 +305,19 @@ collections can be compared.
 
 ## Probe output layout
 
-Data files carry the local date and roll over at midnight. A sample the
-probe could not take is recorded as `{"ts","t","mds","rc","error"}`
-instead of being dropped, so a gap in a stream is always explained.
+Data files carry the local date and roll over at midnight. The name is
+taken when a sample starts, so a file can end with a few records from just
+after midnight (a remote `top` session with up to 10 minutes): order the
+records by `t`, not by file. A sample the probe could not take is recorded
+as `{"ts","t","mds","rc","error"}` instead of being dropped, so a gap in a
+stream is always explained.
+
+Unless `--no-compress`, every data file below is written as `<file>.gz`:
+each record, snapshot or `top` refresh is appended as one more gzip
+member, so the files are readable at any time (`zcat`, `gzip -dcf`,
+Python's `gzip.open`) and a killed probe loses at most the record being
+written. Before the archive is made each file is repacked as a single
+gzip stream, which saves another third.
 
 ```
 <run-dir>/run/                        pid, running flag, internal state
@@ -278,7 +326,7 @@ instead of being dropped, so a gap in a stream is always explained.
                                       perf schemas, mds set changes,
                                       cluster log, quality report
 <run-dir>/fs-perf-stats.<day>.jsonl   per-client workload snapshots
-<run-dir>/fs-status.<day>.jsonl       per-rank req/s, cache, standby list
+<run-dir>/fs-status-<fs>.<day>.jsonl  per-rank req/s, cache, standby list
 <run-dir>/health.<day>.jsonl          cluster health detail
 <run-dir>/perf-<mds>.<day>.jsonl      raw perf counters
 <run-dir>/objecter-<mds>.<day>.jsonl  MDS -> OSD requests in flight

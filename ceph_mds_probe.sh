@@ -37,9 +37,11 @@
 #   host-<mds>.<day>.log        per-thread CPU on the MDS host (--ssh)
 #   daemonperf-<mds>.<day>.log  daemonperf on the MDS host (--daemonperf)
 #
-# Data files carry the local date and roll over at midnight. A sample
-# that fails is recorded as {"ts","t","mds","rc","error"} instead of
-# being dropped, so a gap in a stream is always explained.
+# Data files carry the local date and roll over at midnight. The file
+# name is taken when a sample starts, so a file can end with a few
+# records from just after midnight: order the records by "t", not by
+# file. A sample that fails is recorded as {"ts","t","mds","rc","error"}
+# instead of being dropped, so a gap in a stream is always explained.
 #
 # --ssh uses the cephadm SSH identity (ceph cephadm get-user /
 # get-ssh-config / config-key get mgr/cephadm/ssh_identity_key); the

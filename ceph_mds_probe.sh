@@ -297,6 +297,18 @@ stream_file() {
 #
 RECORD_JSON_RC=0
 
+# json_finite: Ceph's JSON formatter prints non-finite doubles bare
+# (`dump loads` has "halflife":-inf), which is not JSON. jq 1.6 accepts
+# them and writes -DBL_MAX, which is not JSON either (every record of the
+# stream is lost to the analyzer); jq 1.7 rejects the whole reply. Turn
+# them into null before jq sees them. One value per pass, so that
+# adjacent ones ([inf,inf]) are all caught.
+json_finite() {
+    sed -E -e ':a' \
+        -e 's/(:|,|\[)([[:space:]]*)-?(inf|nan)([[:space:]]*([],}]|$))/\1\2null\4/' \
+        -e 'ta'
+}
+
 record_json() {
     local out="$1"; shift
     local mds="$1"; shift
@@ -319,7 +331,8 @@ record_json() {
 
     # normalize to a single line (some builds pretty-print or emit
     # leading whitespace)
-    if [ ${rc} -eq 0 ] && json=$(printf '%s' "${raw}" | jq -c "${filter}" 2>/dev/null) &&
+    if [ ${rc} -eq 0 ] &&
+       json=$(printf '%s' "${raw}" | json_finite | jq -c "${filter}" 2>/dev/null) &&
        [ -n "${json}" ]; then
         record_rc=0
         if [ "${mds}" = "-" ]; then

@@ -81,7 +81,7 @@ TAG="${TAG:-}"
 FS="${FS:-}"
 SKIP_SESSIONS="${SKIP_SESSIONS:-N}"
 ENABLE_STATS_MODULE="${ENABLE_STATS_MODULE:-N}"
-ARCHIVE="${ARCHIVE:-N}"
+ARCHIVE="${ARCHIVE:-Y}"
 COMPRESS="${COMPRESS:-Y}"
 VERBOSE="${VERBOSE:-N}"
 USE_SSH="${USE_SSH:-N}"
@@ -194,7 +194,9 @@ usage()
     echo "      --plain-ssh                 use the invoking user's ssh identity"
     echo "                                  instead of the cephadm one"
     echo "      --archive                   pack the run directory into a tar.gz"
-    echo "                                  on exit (the directory is kept)"
+    echo "                                  on exit (the directory is kept;"
+    echo "                                  this is the default)"
+    echo "      --no-archive                do not pack the run directory on exit"
     echo "      --no-compress               write the data files uncompressed"
     echo "                                  (default: gzip them as they are written)"
     echo "      --enable-stats-module       enable the mgr stats module if it is"
@@ -1665,9 +1667,12 @@ archive_result() {
     level=6
     ls "${RUN_DIR}"/*.gz > /dev/null 2>&1 && level=1
 
+    # the exit status of a pipeline is the compressor's, so the archive
+    # is read back: a tar that failed halfway is caught there
     if tar -C "${parent}" --exclude="${base}/run/running" \
            --exclude="${base}/run/tmp" -cf - "${base}" |
-       ${gz} -${level} > "${result_archive}.tmp"; then
+       ${gz} -${level} > "${result_archive}.tmp" &&
+       gzip -dc "${result_archive}.tmp" | tar -tf - > /dev/null 2>&1; then
         mv -f "${result_archive}.tmp" "${result_archive}"
         (cd "${parent}" && sha256sum "$(basename "${result_archive}")" \
             > "$(basename "${result_archive}").sha256")
@@ -1734,7 +1739,6 @@ cmd_pack() {
         info "WARNING: the probe is still running, the archive is a snapshot"
     fi
     archive_result
-    return 0
 }
 
 #
@@ -1849,7 +1853,7 @@ cleanup() {
 # Main
 #
 
-OPTIONS=$(getopt -o c:d:f:hi:o:s:t:T:vV --long archive,cache-interval:,ceph-config-file:,daemonperf,discovery-interval:,duration:,enable-stats-module,force,fs:,fs-perf-interval:,fs-status-interval:,health-interval:,help,histops-interval:,loads-interval:,max-parallel:,no-compress,no-space-check,objecter-interval:,osd-interval:,osd-limit:,out-dir:,pack,perf-interval:,plain-ssh,run-dir:,session-interval:,skip-histops,skip-sessions,ssh,status,stop,tag:,tell-timeout:,timeout:,verbose,version -- "$@")
+OPTIONS=$(getopt -o c:d:f:hi:o:s:t:T:vV --long archive,cache-interval:,ceph-config-file:,daemonperf,discovery-interval:,duration:,enable-stats-module,force,fs:,fs-perf-interval:,fs-status-interval:,health-interval:,help,histops-interval:,loads-interval:,max-parallel:,no-archive,no-compress,no-space-check,objecter-interval:,osd-interval:,osd-limit:,out-dir:,pack,perf-interval:,plain-ssh,run-dir:,session-interval:,skip-histops,skip-sessions,ssh,status,stop,tag:,tell-timeout:,timeout:,verbose,version -- "$@")
 if [ $? -ne 0 ]; then
     usage >&2
     exit 1
@@ -1965,6 +1969,10 @@ while true; do
             ;;
         --archive)
             ARCHIVE=Y
+            shift
+            ;;
+        --no-archive)
+            ARCHIVE=N
             shift
             ;;
         --no-compress)
@@ -2157,15 +2165,19 @@ cat "${RUN_DIR}/meta/quality-report.txt"
 
 info "done"
 info "result: ${RUN_DIR}"
+ARCHIVE_RC=0
 if [ "${ARCHIVE}" = Y ]; then
     if [ -f "${RUN_DIR}/run/space-low" ]; then
         info "not packing: the free space guard stopped the run;" \
              "copy ${RUN_DIR} off the host, or run --pack once there is room"
+        ARCHIVE_RC=2
     else
-        archive_result
+        archive_result || ARCHIVE_RC=2
     fi
 fi
 
-# non-zero when the quality report found something to check, so a
-# wrapper can tell a clean collection from one that needs a look
+# 0: clean; 1: the quality report found something to check; 2: the
+# archive asked for was not made. A wrapper can tell a clean collection
+# from one that needs a look, and knows whether there is a tar.gz.
+[ "${ARCHIVE_RC}" -ne 0 ] && exit ${ARCHIVE_RC}
 exit ${QUALITY_RC}

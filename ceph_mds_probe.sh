@@ -82,6 +82,7 @@ PLAIN_SSH="${PLAIN_SSH:-N}"
 DO_DAEMONPERF="${DO_DAEMONPERF:-N}"
 SSH_OPTS="${SSH_OPTS:-}"
 SPACE_CHECK="${SPACE_CHECK:-Y}"
+MIN_FREE_PCT="${MIN_FREE_PCT:-10}"
 FORCE="${FORCE:-N}"
 ACTION=run
 RUN_DIR="${RUN_DIR:-}"
@@ -190,7 +191,9 @@ usage()
     echo "                                  off (needed for fs perf stats);"
     echo "                                  restored on exit"
     echo "      --no-space-check            do not estimate the data volume and"
-    echo "                                  check the free space before starting"
+    echo "                                  check the free space before starting,"
+    echo "                                  nor stop when --out-dir runs below"
+    echo "                                  MIN_FREE_PCT% free (default ${MIN_FREE_PCT})"
     echo "      --force                     start even if the estimated data"
     echo "                                  volume does not fit in --out-dir"
     echo "      --stop                      stop the running probe in --out-dir"
@@ -981,6 +984,17 @@ worker_discovery() {
     while running; do
         nap "${DISCOVERY_INTERVAL}"
         running || break
+
+        # the estimate is only an estimate (a busy MDS's historic ops can
+        # grow far beyond it); /var/log/ceph often shares its filesystem
+        # with the mon store, and a mon stops when that fills up
+        if [ "${SPACE_CHECK}" = Y ] && ! free_space_ok; then
+            info "WARNING: less than ${MIN_FREE_PCT}% free in ${OUT_DIR}," \
+                 "stopping the probe to protect the host"
+            rm -f "${RUN_DIR}/run/running"
+            break
+        fi
+
         mdss=$(get_active_mdss)
         if [ -z "${mdss}" ]; then
             echo "$(now_iso) no active mds found, keeping the previous set" \
@@ -1213,6 +1227,12 @@ human() {
     }'
 }
 
+# free_space_ok: at least MIN_FREE_PCT% of the --out-dir filesystem free
+free_space_ok() {
+    df -Pk "${OUT_DIR}" 2>/dev/null |
+        awk -v min="${MIN_FREE_PCT}" 'NR == 2 && $2 > 0 { exit ($4 * 100 / $2 < min) }'
+}
+
 sample_size() {
     PYTHONUNBUFFERED=1 "$@" 2>/dev/null | jq -c . 2>/dev/null | wc -c | tr -d ' '
 }
@@ -1228,9 +1248,33 @@ per_day() {
     echo $((86400 / interval * size * count))
 }
 
+# histops_size <mds>: projected size of one historic ops snapshot. The
+# history fills up to mds_op_history_size ops (1000 when the recommended
+# setting is applied right before the run, against 20 by default), at a
+# few KiB per op under load, so the size is extrapolated from the bytes
+# per op seen now rather than taken as is.
+histops_size() {
+    local d="$1"
+    local raw bytes nops hsize
+
+    raw=$(PYTHONUNBUFFERED=1 ${CEPH_TELL} tell "${d}" dump_historic_ops_by_duration 2>/dev/null)
+    bytes=$(printf '%s' "${raw}" | wc -c | tr -d ' ')
+    nops=$(printf '%s' "${raw}" | json_finite | jq '.ops | length' 2>/dev/null)
+    hsize=$(jq -r '.mds_op_history_size // empty' \
+                "${RUN_DIR}/meta/options-${d}.json" 2>/dev/null)
+    [ "${hsize}" -gt 0 ] 2>/dev/null || hsize=20
+    if [ "${nops}" -gt 0 ] 2>/dev/null; then
+        [ "${nops}" -gt "${hsize}" ] && hsize=${nops}
+        echo $((bytes / nops * hsize))
+    else
+        # empty history: assume 3 KiB per op
+        echo $((3072 * hsize))
+    fi
+}
+
 estimate_volume() {
     local d nmds nosd total days avail need
-    local s_perf=40000 s_sess=20000 s_fsperf=10000
+    local s_perf=40000 s_sess=20000 s_fsperf=10000 s_hist=8192
 
     nmds=$(current_mdss | grep -c .)
     nosd=$(current_osds | grep -c .)
@@ -1244,6 +1288,10 @@ estimate_volume() {
             s_sess=$(sample_size ${CEPH_TELL} tell "${d}" session ls -f json)
             [ "${s_sess}" -gt 100 ] 2>/dev/null || s_sess=20000
         fi
+        if [ "${HISTOPS_INTERVAL}" -gt 0 ]; then
+            s_hist=$(histops_size "${d}")
+            [ "${s_hist}" -gt 100 ] 2>/dev/null || s_hist=8192
+        fi
     fi
     s_fsperf=$(sample_size ${CEPH_TELL} fs perf stats -f json)
     [ "${s_fsperf}" -gt 100 ] 2>/dev/null || s_fsperf=10000
@@ -1253,7 +1301,7 @@ estimate_volume() {
     total=$((total + $(per_day "${SESSION_INTERVAL}"   "${s_sess}"  "${nmds}")))
     total=$((total + $(per_day "${OBJECTER_INTERVAL}"  2048         "${nmds}")))
     total=$((total + $(per_day "${CACHE_INTERVAL}"     2048         "${nmds}")))
-    total=$((total + $(per_day "${HISTOPS_INTERVAL}"   8192         "${nmds}")))
+    total=$((total + $(per_day "${HISTOPS_INTERVAL}"   "${s_hist}"  "${nmds}")))
     total=$((total + $(per_day "${LOADS_INTERVAL}"     8192         "${nmds}")))
     total=$((total + $(per_day "${FS_PERF_INTERVAL}"   "${s_fsperf}" 1)))
     total=$((total + $(per_day "${FS_STATUS_INTERVAL}" 4096         1)))

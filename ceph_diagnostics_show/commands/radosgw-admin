@@ -7,13 +7,38 @@ description() {
 help() {
     description
     echo ""
+    echo "usage: radosgw-admin [--zone <zone>] [--realm <realm>] <command>"
+    echo ""
+    echo "Without --zone/--realm, the default realm/zone view is shown."
+    echo "Use 'cds rgw zones' to list the collected zones."
+    echo ""
     echo "supported commands:"
     echo ""
     echo "  bucket limit check [user_id [bucket]]"
     echo "  bucket stats [bucket]"
     echo "  metadata list bucket.instance"
-    echo "  period get"
+    echo "  period get                       (default realm, or --realm)"
     echo "  sync status"
+    echo ""
+    echo "  realm list"
+    echo "  zonegroup list"
+    echo "  zone list"
+    echo "  rgw root ls                      (objects in the realm root pool)"
+    echo ""
+    echo "per-zone only (require --zone):"
+    echo ""
+    echo "  metadata list bucket"
+    echo "  metadata list user"
+    echo "  zone get"
+    echo "  zonegroup get"
+    echo "  reshard list"
+    echo "  reshard stale-instances list"
+    echo "  lc list"
+}
+
+# same sanitizing as rgw_name() in ceph_diagnostics_collect.sh
+rgw_name() {
+    echo "$1" | tr -c 'A-Za-z0-9._\n-' '_'
 }
 
 bucket_limit_check_filter() {
@@ -39,9 +64,39 @@ bucket_stats_filter() {
     fi
 }
 
+zone=
+realm=
+while true; do
+    case "$1" in
+        -z|--zone)
+            zone="$2"
+            shift 2
+            ;;
+        -r|--realm)
+            realm="$2"
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
 cmd="$@"
 file=
 filter=cat
+prefix="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info"
+zprefix="${prefix}"
+if [ -n "${zone}" ]; then
+    zprefix="${prefix}-zone-$(rgw_name "${zone}")"
+fi
+
+zone_only() {
+    if [ -z "${zone}" ]; then
+        echo "${cmd}: --zone <zone> is required (see 'cds rgw zones')" >&2
+        exit 1
+    fi
+}
 
 case "$cmd" in
     description)
@@ -53,21 +108,39 @@ case "$cmd" in
         exit 0
         ;;
     "bucket limit check"|"bucket limit check "*)
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-bucket_limit_check"
+	file="${zprefix}-bucket_limit_check"
 	filter="bucket_limit_check_filter ${cmd#bucket limit check}"
         ;;
     "bucket stats"|"bucket stats "*)
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-bucket_stats"
+	file="${zprefix}-bucket_stats"
 	filter="bucket_stats_filter ${cmd#bucket stats}"
         ;;
     "metadata list bucket.instance")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-metadata_list_bucket.instance"
+	file="${zprefix}-metadata_list_bucket.instance"
         ;;
     "period get")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-period_get"
+	if [ -n "${realm}" ]; then
+	    file="${prefix}-realm-$(rgw_name "${realm}")-period_get"
+	else
+	    file="${prefix}-period_get"
+	fi
+        ;;
+    "realm list"|"zonegroup list"|"zone list")
+	file="${prefix}-$(echo "${cmd}" | tr ' ' '_')"
+        ;;
+    "rgw root ls")
+	file="${prefix}-rgw_root_ls"
+        ;;
+    "reshard stale-instances list")
+	zone_only
+	file="${zprefix}-reshard_stale-instances_list"
+        ;;
+    "metadata list bucket"|"metadata list user"|"zone get"|"zonegroup get"|"reshard list"|"lc list")
+	zone_only
+	file="${zprefix}-$(echo "${cmd}" | tr ' ' '_')"
         ;;
     "sync status")
-	file="${CEPH_DIAGNOSTICS_COLLECT_DIR}/radosgw_admin_info-sync_status"
+	file="${zprefix}-sync_status"
         ;;
     *)
 	echo "invalid or unsupported radosgw-admin command: $cmd" >&2

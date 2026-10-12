@@ -58,6 +58,32 @@ bucket-19                                                 478,856         37    
 bucket-20                                                  15,939         17            5.99             937.59
 ```
 
+RGW: a cluster may host several independent realms/zonegroups/zones. The
+collector gathers `radosgw-admin` outputs for the default realm (historical
+`radosgw_admin_info-*` names) and for every zone of every realm, plus zones
+outside any realm (`radosgw_admin_info-zone-<zone>-*`, indexed in
+`radosgw_admin_info-zones`). `cds rgw` and `cds rgw top` show the buckets of
+all zones (`-z <zone>` to restrict to one zone).
+
+cds rgw zones - realms/zonegroups/zones, running RGW daemons and collected buckets
+```
+Realm            Zonegroup        Zone                 RGWs    Buckets         Objects      Size (TiB)
+------------------------------------------------------------------------------------------------------
+realm-a          zg-a             zone-a                  4      1,204     380,854,757        1,011.13
+realm-b          zg-b             zone-b                  2        312     235,073,587           25.93
+realm-c          zg-c             zone-c                  0          -               -               -
+```
+
+cds rgw large-omap - map "Large omap object found" cluster log messages to buckets
+```
+Pool                           Zone         Bucket                     PG         Keys    Size (Bytes)  Object
+---------------------------------------------------------------------------------------------------------------
+zone-b.rgw.buckets.index       zone-b       bucket-1                66.15      250,123      61,873,520  .dir.<bucket id>.17
+```
+
+cds radosgw-admin --zone <zone> bucket stats [bucket] - per-zone radosgw-admin outputs
+(`cds radosgw-admin help` lists them)
+
 # fs perf stats in collect
 
 `ceph_diagnostics_collect.sh` also stores a `fs perf stats` snapshot

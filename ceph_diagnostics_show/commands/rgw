@@ -2,11 +2,12 @@
 
 import argparse
 import os
+import re
 import sys
 
 sys.path.append(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-from common import json_load, handle_broken_pipe
+from common import json_load, handle_broken_pipe, CEPH_DIAGNOSTICS_COLLECT_DIR
 
 #
 # Global
@@ -14,15 +15,25 @@ from common import json_load, handle_broken_pipe
 
 cmd_description = 'Show RGW bucket statistics'
 
+ZONES_FILE = 'radosgw_admin_info-zones'
+
 parser = argparse.ArgumentParser(prog='cds rgw', description=cmd_description)
+parser.add_argument('-z', '--zone', help='Only show buckets of this zone')
 subparsers = parser.add_subparsers(dest='command')
 
 # Add top command parser
 top_parser = subparsers.add_parser('top', help='Show top N buckets sorted by specified metric')
+top_parser.add_argument('-z', '--zone', default=argparse.SUPPRESS, help='Only show buckets of this zone')
 top_parser.add_argument('-n', type=int, default=20, help='Number of buckets to show (default: 20)')
 top_parser.add_argument('--all', action='store_true', help='Show all buckets instead of limiting to N')
 top_parser.add_argument('-s', '--sort', choices=['size', 'objects', 'shards', 'objects_per_shard', 'name'],
                        default='size', help='Sort criteria (default: size)')
+
+# Add zones command parser
+zones_parser = subparsers.add_parser('zones', help='Show realms/zonegroups/zones, running RGWs and collected buckets')
+
+# Add large-omap command parser
+large_omap_parser = subparsers.add_parser('large-omap', help='Map large omap objects from the cluster log to buckets')
 
 #
 # Functions
@@ -37,38 +48,85 @@ def help():
 def bytes_to_tib(bytes_value):
     return bytes_value / (1024 ** 4)  # 1 TiB = 1024^4 bytes
 
+def collect_path(name):
+    return os.path.join(CEPH_DIAGNOSTICS_COLLECT_DIR or '.', name)
+
+def zone_file_name(zone, name):
+    # same sanitizing as rgw_name() in ceph_diagnostics_collect.sh
+    safe = ''.join(c if c.isalnum() or c in '._-' else '_' for c in zone)
+    return f'radosgw_admin_info-zone-{safe}-{name}'
+
+def rgw_collected_zones():
+    """(realm, zonegroup, zone) for every zone collected, or None for older
+    collections that only have the default realm/zone view."""
+    zones_file = collect_path(ZONES_FILE)
+    if not os.path.exists(zones_file):
+        return None
+
+    zones = []
+    with open(zones_file) as f:
+        for line in f:
+            fields = line.split()
+            if len(fields) != 3:
+                continue
+            zones.append(tuple(None if x == '-' else x for x in fields))
+    return zones
+
+def rgw_zone_stats_files():
+    zones = rgw_collected_zones()
+    if zones is None:
+        return [(None, 'radosgw_admin_info-bucket_stats')]
+    return [(zone, zone_file_name(zone, 'bucket_stats')) for _, _, zone in zones]
+
+def rgw_load_json_list(name, what):
+    path = collect_path(name)
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return None
+    data = json_load(path, exit_on_error=False)
+    if isinstance(data, dict) and what in data:
+        data = [data]
+    if not isinstance(data, list):
+        print(f"Warning: Expected a list in '{name}', but got {type(data)}", file=sys.stderr)
+        return None
+    return data
+
+def rgw_load_bucket_stats(zone_filter=None):
+    bucket_stats = []
+    for zone, stats_file in rgw_zone_stats_files():
+        if zone_filter and zone != zone_filter:
+            continue
+        stats = rgw_load_json_list(stats_file, 'bucket')
+        if stats is None:
+            print(f"Warning: no bucket stats for zone {zone or 'default'} ('{stats_file}')", file=sys.stderr)
+            continue
+        bucket_stats += [(zone, b) for b in stats]
+    return bucket_stats
+
+def bucket_usage(bucket_info):
+    usage = bucket_info.get('usage', {}).get('rgw.main', {})
+    return usage.get('num_objects', 0), usage.get('size', 0)
+
 def rgw_bucket_stats(args=None):
-    stats_file = 'radosgw_admin_info-bucket_stats'
-    if not os.path.exists(stats_file):
-        print(f"Error: Bucket stats file '{stats_file}' not found.", file=sys.stderr)
+    bucket_stats = rgw_load_bucket_stats(getattr(args, 'zone', None))
+    if not bucket_stats:
+        print("Error: no bucket stats found.", file=sys.stderr)
         print("Please ensure 'radosgw-admin bucket stats' was collected.", file=sys.stderr)
         return
 
-    bucket_stats = json_load(stats_file)
-
-    # Ensure bucket_stats is a list
-    if not isinstance(bucket_stats, list):
-        if isinstance(bucket_stats, dict) and 'bucket' in bucket_stats:
-            bucket_stats = [bucket_stats]
-        else:
-            print(f"Error: Expected a list of buckets in '{stats_file}', but got {type(bucket_stats)}", file=sys.stderr)
-            return
-
     # Process bucket data
     analyzed_buckets = []
-    for bucket_info in bucket_stats:
+    for zone, bucket_info in bucket_stats:
         try:
             bucket_name = bucket_info.get('bucket', 'N/A')
             num_shards = bucket_info.get('num_shards', 0)
-            usage = bucket_info.get('usage', {}).get('rgw.main', {})
-            num_objects = usage.get('num_objects', 0)
-            bucket_size = usage.get('size', 0)
+            num_objects, bucket_size = bucket_usage(bucket_info)
 
             objects_per_shard = 0
             if num_shards > 0:
                 objects_per_shard = num_objects / num_shards
 
             analyzed_buckets.append({
+                'zone': zone or '-',
                 'name': bucket_name,
                 'num_objects': num_objects,
                 'objects_per_shard': objects_per_shard,
@@ -81,7 +139,7 @@ def rgw_bucket_stats(args=None):
             continue
 
     # Determine sort behavior based on whether this is a 'top' command or regular stats
-    is_top_command = args is not None and hasattr(args, 'sort')
+    is_top_command = args is not None and args.command == 'top'
 
     if is_top_command:
         # Sort based on specified criteria for 'top' command
@@ -109,15 +167,16 @@ def rgw_bucket_stats(args=None):
         size_field = 'bucket_size'
         size_format = '{:>20,}'
 
-    header = "{:<50} {:>15} {:>10} {:>20} {:>18}".format(
-        'Bucket Name', 'Num Objects', 'Shards', size_header, 'Objects/Shard'
+    header = "{:<12} {:<50} {:>15} {:>10} {:>20} {:>18}".format(
+        'Zone', 'Bucket Name', 'Num Objects', 'Shards', size_header, 'Objects/Shard'
     )
     try:
         print(header)
         print('-' * len(header))
 
         for bucket in analyzed_buckets:
-            print(('{:<50} {:>15,} {:>10} ' + size_format + ' {:>18,.2f}').format(
+            print(('{:<12} {:<50} {:>15,} {:>10} ' + size_format + ' {:>18,.2f}').format(
+                bucket['zone'],
                 bucket['name'],
                 bucket['num_objects'],
                 bucket['num_shards'],
@@ -127,6 +186,145 @@ def rgw_bucket_stats(args=None):
     except BrokenPipeError:
         # Silently handle broken pipe within the function
         return
+
+def rgw_running_daemons():
+    """{(realm, zonegroup, zone): [hostname, ...]} from the servicemap."""
+    daemons = {}
+    path = collect_path('cluster_health-report')
+    if not os.path.exists(path):
+        return daemons
+    report = json_load(path, exit_on_error=False) or {}
+    rgws = report.get('servicemap', {}).get('services', {}).get('rgw', {}).get('daemons', {})
+    for d in rgws.values():
+        if not isinstance(d, dict):
+            continue
+        m = d.get('metadata', {})
+        key = (m.get('realm_name') or None, m.get('zonegroup_name') or None, m.get('zone_name'))
+        daemons.setdefault(key, []).append(m.get('hostname', '?'))
+    return daemons
+
+def rgw_legacy_zone():
+    """The zone the default (non per-zone) bucket stats belong to, when the
+    default realm period has a single zone."""
+    path = collect_path('radosgw_admin_info-period_get')
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return None
+    period = json_load(path, exit_on_error=False) or {}
+    zones = [(zg.get('name'), z.get('name'))
+             for zg in period.get('period_map', {}).get('zonegroups', [])
+             for z in zg.get('zones', [])]
+    return zones[0] if len(zones) == 1 else None
+
+def rgw_zones(args=None):
+    collected = rgw_collected_zones()
+    daemons = rgw_running_daemons()
+
+    rows = {}
+    for realm, zonegroup, zone in (collected or []):
+        rows[zone] = {'realm': realm, 'zonegroup': zonegroup, 'collected': True,
+                      'stats': zone_file_name(zone, 'bucket_stats')}
+    legacy = rgw_legacy_zone() if collected is None else None
+    if legacy:
+        rows[legacy[1]] = {'realm': None, 'zonegroup': legacy[0], 'collected': True,
+                           'stats': 'radosgw_admin_info-bucket_stats'}
+    for (realm, zonegroup, zone), hosts in daemons.items():
+        row = rows.setdefault(zone, {'realm': realm, 'zonegroup': zonegroup, 'collected': False})
+        row['realm'] = row['realm'] or realm
+        row['zonegroup'] = row['zonegroup'] or zonegroup
+        row['daemons'] = hosts
+
+    if not rows:
+        print("Error: no RGW zone information found.", file=sys.stderr)
+        return
+
+    header = "{:<16} {:<16} {:<16} {:>8} {:>10} {:>15} {:>15}".format(
+        'Realm', 'Zonegroup', 'Zone', 'RGWs', 'Buckets', 'Objects', 'Size (TiB)')
+    print(header)
+    print('-' * len(header))
+    for zone in sorted(rows, key=lambda z: (rows[z]['realm'] or '~', z or '')):
+        row = rows[zone]
+        buckets = objects = size = '-'
+        if row['collected']:
+            stats = rgw_load_json_list(row['stats'], 'bucket')
+            if stats is not None:
+                usage = [bucket_usage(b) for b in stats]
+                buckets = f"{len(stats):,}"
+                objects = f"{sum(u[0] for u in usage):,}"
+                size = f"{bytes_to_tib(sum(u[1] for u in usage)):,.2f}"
+            else:
+                buckets = 'failed'
+        print("{:<16} {:<16} {:<16} {:>8} {:>10} {:>15} {:>15}".format(
+            row['realm'] or '-', row['zonegroup'] or '-', zone or '-',
+            len(row.get('daemons', [])), buckets, objects, size))
+
+    if collected is None:
+        print("\nWarning: this collection predates per-zone RGW collection: bucket stats were only\n"
+              "collected for the default realm/zone ('cds rgw' shows those buckets only).",
+              file=sys.stderr)
+    else:
+        missing = [z for z, r in rows.items() if not r['collected']]
+        if missing:
+            print(f"\nWarning: zones with running RGWs but not collected: {', '.join(missing)}",
+                  file=sys.stderr)
+
+LARGE_OMAP_RE = re.compile(
+    r'Large omap object found\. Object: (?P<pool>\d+):[0-9a-f]+:[^:]*:[^:]*:(?P<name>.+):[^:\s]+ '
+    r'PG: \S+ \((?P<pg>[^)]+)\) Key count: (?P<keys>\d+) Size \(bytes\): (?P<bytes>\d+)')
+
+def rgw_pool_names():
+    path = collect_path('cluster_health-df.json')
+    if not os.path.exists(path):
+        return {}
+    df = json_load(path, exit_on_error=False) or {}
+    return {str(p['id']): p['name'] for p in df.get('pools', [])}
+
+def rgw_bucket_index_ids():
+    """[(index object prefix, zone, bucket)] for all collected buckets."""
+    ids = []
+    for zone, b in rgw_load_bucket_stats():
+        if b.get('id'):
+            ids.append(('.dir.' + b['id'] + '.', zone, b.get('bucket', 'N/A')))
+    # longest first, so that a bucket id that is a prefix of another does not win
+    ids.sort(key=lambda x: len(x[0]), reverse=True)
+    return ids
+
+def rgw_large_omap(args=None):
+    log_file = collect_path('cluster_health-cluster_log')
+    if not os.path.exists(log_file):
+        print("Error: cluster log not collected ('ceph log last 10000 cluster').", file=sys.stderr)
+        return
+
+    objects = {}
+    with open(log_file, errors='replace') as f:
+        for line in f:
+            m = LARGE_OMAP_RE.search(line)
+            if m:
+                # keep the last report for each object
+                objects[(m['pool'], m['name'])] = m
+
+    if not objects:
+        print("No 'Large omap object found' messages in the collected cluster log.", file=sys.stderr)
+        print("(they are only logged by deep scrub: check older logs on the mon hosts)", file=sys.stderr)
+        return
+
+    pools = rgw_pool_names()
+    ids = rgw_bucket_index_ids()
+
+    header = "{:<30} {:<12} {:<40} {:>8} {:>12} {:>15}  {}".format(
+        'Pool', 'Zone', 'Bucket', 'PG', 'Keys', 'Size (Bytes)', 'Object')
+    print(header)
+    print('-' * len(header))
+    for (pool, name), m in sorted(objects.items(), key=lambda x: -int(x[1]['keys'])):
+        zone, bucket = '-', '?'
+        if name.startswith('.dir.'):
+            for prefix, z, b in ids:
+                if name.startswith(prefix):
+                    zone, bucket = z or '-', b
+                    break
+            else:
+                bucket = '(not in bucket stats: stale instance?)'
+        print("{:<30} {:<12} {:<40} {:>8} {:>12,} {:>15,}  {}".format(
+            pools.get(pool, pool), zone, bucket, m['pg'], int(m['keys']), int(m['bytes']), name))
 
 @handle_broken_pipe
 def main():
@@ -139,10 +337,12 @@ def main():
             exit(0)
 
     args = parser.parse_args()
-    if args.command == 'top':
-        rgw_bucket_stats(args)
+    if args.command == 'zones':
+        rgw_zones(args)
+    elif args.command == 'large-omap':
+        rgw_large_omap(args)
     else:
-        rgw_bucket_stats()
+        rgw_bucket_stats(args)
 
 #
 # main
@@ -150,4 +350,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

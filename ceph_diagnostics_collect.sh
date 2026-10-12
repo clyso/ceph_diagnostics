@@ -561,8 +561,49 @@ get_fs_info() {
     store_messanger_info "${mdss}" ${t}
 }
 
+censor_rgw_zone_json() {
+    if [ -z "${CENSORED}" ]; then
+        "$@"
+        return
+    fi
+
+    "$@" | jq '(.system_key // {}) |= map_values("'"${CENSORED}"'")'
+}
+
+rgw_name() {
+    echo "$1" | tr -c 'A-Za-z0-9._\n-' '_'
+}
+
+get_radosgw_admin_zone_info() {
+    local t="$1"; shift
+    local realm="$1"; shift
+    local zonegroup="$1"; shift
+    local zone="$1"; shift
+    local args="--rgw-zone=${zone}"
+    local z
+
+    [ -n "${zonegroup}" ] && args="--rgw-zonegroup=${zonegroup} ${args}"
+    [ -n "${realm}" ] && args="--rgw-realm=${realm} ${args}"
+    z=${t}-zone-$(rgw_name "${zone}")
+
+    echo "${realm:--} ${zonegroup:--} ${zone}" >> "${RESULTS_DIR}/${t}-zones"
+
+    store -s ${z}-zone_get                    censor_rgw_zone_json ${RADOSGW_ADMIN} zone get ${args}
+    store -s ${z}-zonegroup_get               ${RADOSGW_ADMIN} zonegroup get ${args}
+    store -s ${z}-bucket_stats                ${RADOSGW_ADMIN} bucket stats ${args}
+    store -s ${z}-bucket_limit_check          ${RADOSGW_ADMIN} bucket limit check ${args}
+    store -s ${z}-metadata_list_bucket        ${RADOSGW_ADMIN} metadata list bucket ${args}
+    store -s ${z}-metadata_list_bucket.instance ${RADOSGW_ADMIN} metadata list bucket.instance ${args}
+    store -s ${z}-metadata_list_user          ${RADOSGW_ADMIN} metadata list user ${args}
+    store -s ${z}-reshard_list                ${RADOSGW_ADMIN} reshard list ${args}
+    store -s ${z}-reshard_stale-instances_list ${RADOSGW_ADMIN} reshard stale-instances list ${args}
+    store -s ${z}-lc_list                     ${RADOSGW_ADMIN} lc list ${args}
+    store -S ${z}-sync_status                 ${RADOSGW_ADMIN} sync status ${args}
+}
+
 get_radosgw_admin_info() {
     local t=radosgw_admin_info
+    local realm zonegroup zone
 
     if ! ${CEPH} osd dump | grep -q '^pool .* application rgw'; then
         return
@@ -578,11 +619,45 @@ get_radosgw_admin_info() {
 
     info "collecting radosgw info ..."
 
+    # Default realm/zone view, kept under the historical names.
     store -s ${t}-bucket_stats                  ${RADOSGW_ADMIN} bucket stats
     store -s ${t}-bucket_limit_check            ${RADOSGW_ADMIN} bucket limit check
     store -s ${t}-metadata_list_bucket.instance ${RADOSGW_ADMIN} metadata list bucket.instance
     store -s ${t}-period_get                    ${RADOSGW_ADMIN} period get
     store -S ${t}-sync_status                   ${RADOSGW_ADMIN} sync status
+
+    # Everything defined in the realm root pool. A cluster may host several
+    # independent realms (and zones outside any realm), while radosgw-admin
+    # without --rgw-realm/--rgw-zone only looks at the default one.
+    store -s ${t}-realm_list                    ${RADOSGW_ADMIN} realm list
+    store -s ${t}-zonegroup_list                ${RADOSGW_ADMIN} zonegroup list
+    store -s ${t}-zone_list                     ${RADOSGW_ADMIN} zone list
+    # The raw realm/zonegroup/zone/period objects, in case the above fail.
+    store -S ${t}-rgw_root_ls                   ${RADOS} -p "${root_pool}" ls
+
+    : > "${RESULTS_DIR}/${t}-zones"
+
+    for realm in $(show_stored ${t}-realm_list | jq -r '.realms[]?'); do
+        info "collecting radosgw info for realm ${realm} ..."
+        store -s ${t}-realm-$(rgw_name "${realm}")-period_get \
+              ${RADOSGW_ADMIN} period get --rgw-realm="${realm}"
+        show_stored ${t}-realm-$(rgw_name "${realm}")-period_get |
+            jq -r '.period_map.zonegroups[]? | .name as $zg | .zones[]? |
+                   "\($zg) \(.name)"' 2>/dev/null |
+        while read zonegroup zone; do
+            get_radosgw_admin_zone_info ${t} "${realm}" "${zonegroup}" "${zone}"
+        done
+    done
+
+    # Zones not part of any realm period (single-site without realm, or
+    # leftovers from failed/abandoned setups that may still hold data).
+    for zone in $(show_stored ${t}-zone_list | jq -r '.zones[]?'); do
+        if ! awk -v z="${zone}" '$3 == z {f=1} END {exit !f}' \
+             "${RESULTS_DIR}/${t}-zones"; then
+            info "collecting radosgw info for realm-less zone ${zone} ..."
+            get_radosgw_admin_zone_info ${t} "" "" "${zone}"
+        fi
+    done
 }
 
 get_orch_info() {

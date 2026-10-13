@@ -79,9 +79,12 @@ Each stream samples in its own worker, so one slow `ceph tell` cannot
 starve the others, and the active MDS set is re-discovered while the
 probe runs, so a rank that fails over to another daemon keeps being
 sampled. Samples that fail are recorded with their error instead of
-being dropped, and the run ends with a data quality report.
+being dropped, and the run ends with a data quality report. The data
+files are gzipped as they are written, and the run is packed into a
+tar.gz with a sha256 manifest when it ends.
 
-With `--ssh` the probe also samples per-thread CPU (`top -b -H`) and
+With `--ssh` the probe also samples the per-thread CPU of every MDS
+daemon (`top -b -H` on the daemon's own pid) and, with `--daemonperf`,
 `daemonperf` on the MDS hosts, using the cephadm SSH identity; the
 private key stays in memory. All cluster sampling is read-only: apart
 from the optional `--enable-stats-module` (which is restored on exit),

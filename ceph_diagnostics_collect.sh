@@ -61,9 +61,7 @@ usage()
     echo "  -M | --mon-perf-reset-and-sleep <sec>  reset mon perf counters and sleep"
     echo "  -O | --osd-perf-reset-and-sleep <sec>  reset osd perf counters and sleep"
     echo "  -T | --radosgw-admin-timeout <sec>     timeout radosgw-admin operations"
-    echo "  -X | --all-perf-reset-and-sleep <sec>  reset all perf counters at once and"
-    echo "                                         sleep only once (use instead of -D/-G/-M/-O"
-    echo "                                         to avoid sleeping N*sec)"
+    echo "  -X | --all-perf-reset-and-sleep <sec>  reset all perf counters at once and sleep"
     echo
 }
 
@@ -349,6 +347,68 @@ get_health_info() {
     done
 }
 
+# Daemon list parsers, used both when collecting info and when resetting
+# perf counters, so parsing fixes are needed in one place. Each takes the
+# json rendering and the text rendering (fallback) of the command output as
+# two arguments and prints daemon names.
+get_mons() {
+    local mons
+
+    # from the json: the text rendering is a display format that has changed
+    # between releases, and it is not what --json-only leaves behind
+    mons=$(printf '%s\n' "$1" | jq -r '.mons[]? | "mon." + .name' 2>/dev/null)
+    if [ -z "${mons}" ]; then
+        mons=$(printf '%s\n' "$2" | sed -nEe 's/^.* (mon\.[^; ]*).*$/\1/p')
+    fi
+    echo "${mons}"
+}
+
+get_mgrs() {
+    printf '%s\n' "$2" | sed -nEe 's/^.*"active_name": "([^"]*)".*$/mgr.\1/p'
+}
+
+get_mdss() {
+    local mdss
+
+    # from the json rather than the text rendering
+    mdss=$(printf '%s\n' "$1" |
+           jq -r '.filesystems[]?.mdsmap.info[]? |
+                  select(.state == "up:active") | "mds." + .name' 2>/dev/null)
+    if [ -z "${mdss}" ]; then
+        mdss=$(printf '%s\n' "$2" |
+               sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p')
+    fi
+    echo "${mdss}"
+}
+
+# Sort osds by weight and print up to ASOK_STATS_MAX_OSDS of every class
+# with highest weight. The text fallback parses lines like this:
+#
+#   99    ssd     0.21799          osd.99               up   1.00000  1.00000
+#
+get_osds() {
+    local osds
+
+    osds=$(printf '%s\n' "$1" |
+           jq -r --argjson max "${ASOK_STATS_MAX_OSDS}" '
+               [.nodes[]? |
+                select(.type == "osd" and .status == "up" and
+                       (.reweight // 0) > 0.1)] |
+               sort_by(-(.crush_weight // 0)) |
+               group_by(.device_class // "unknown") |
+               map(.[0:$max]) | flatten | .[].name' 2>/dev/null)
+    if [ -z "${osds}" ]; then
+        osds=$(printf '%s\n' "$2" | sort -nrk 3 |
+               awk -v max_osds=${ASOK_STATS_MAX_OSDS} '
+                   n[$2] < max_osds && $5 == "up" && $6 > 0.1 {
+                       print $4;
+                       n[$2]++;
+                   }'
+             )
+    fi
+    echo "${osds}"
+}
+
 get_monitor_info() {
     local t=monitor_info
     local mons
@@ -360,13 +420,7 @@ get_monitor_info() {
     store -s ${t}-map      ${CEPH} mon getmap
     store -s ${t}-metadata ${CEPH} mon metadata
 
-    # from the json: the text rendering is a display format that has changed
-    # between releases, and it is not what --json-only leaves behind
-    mons=$(show_stored ${t}-dump.json |
-           jq -r '.mons[]? | "mon." + .name' 2>/dev/null)
-    if [ -z "${mons}" ]; then
-        mons=$(show_stored ${t}-dump | sed -nEe 's/^.* (mon\.[^; ]*).*$/\1/p')
-    fi
+    mons=$(get_mons "$(show_stored ${t}-dump.json)" "$(show_stored ${t}-dump)")
 
     if [ "${RESET_ALL_PERF_AND_SLEEP}" -eq 0 ] && [ "${RESET_MON_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${mons}" ${t} perf_reset perf reset all
@@ -405,8 +459,7 @@ get_manager_info() {
     store -s ${t}-dump    ${CEPH} mgr dump
     store -s ${t}-metadata   ${CEPH} mgr metadata
 
-    mgrs=$(show_stored ${t}-dump |
-           sed -nEe 's/^.*"active_name": "([^"]*)".*$/mgr.\1/p')
+    mgrs=$(get_mgrs "" "$(show_stored ${t}-dump)")
 
     if [ "${RESET_ALL_PERF_AND_SLEEP}" -eq 0 ] && [ "${RESET_MGR_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${mgrs}" ${t} perf_reset perf reset all
@@ -452,23 +505,7 @@ get_osd_info() {
     #
     #   99    ssd     0.21799          osd.99               up   1.00000  1.00000
     #
-    osds=$(show_stored ${t}-tree.json |
-           jq -r --argjson max "${ASOK_STATS_MAX_OSDS}" '
-               [.nodes[]? |
-                select(.type == "osd" and .status == "up" and
-                       (.reweight // 0) > 0.1)] |
-               sort_by(-(.crush_weight // 0)) |
-               group_by(.device_class // "unknown") |
-               map(.[0:$max]) | flatten | .[].name' 2>/dev/null)
-    if [ -z "${osds}" ]; then
-        osds=$(show_stored ${t}-tree | sort -nrk 3 |
-               awk -v max_osds=${ASOK_STATS_MAX_OSDS} '
-                   n[$2] < max_osds && $5 == "up" && $6 > 0.1 {
-                       print $4;
-                       n[$2]++;
-                   }'
-             )
-    fi
+    osds=$(get_osds "$(show_stored ${t}-tree.json)" "$(show_stored ${t}-tree)")
 
     if [ "${RESET_ALL_PERF_AND_SLEEP}" -eq 0 ] && [ "${RESET_OSD_PERF_AND_SLEEP}" -gt 0 ]; then
         store_tell -S "${osds}" ${t} perf_reset perf reset all
@@ -540,13 +577,7 @@ get_fs_info() {
     # from the json rather than the text rendering, and standby-replay is
     # discovered too: it has its own cache and perf counters, and it is the
     # daemon that takes over
-    mdss=$(show_stored ${t}-dump.json |
-           jq -r '.filesystems[]?.mdsmap.info[]? |
-                  select(.state == "up:active") | "mds." + .name' 2>/dev/null)
-    if [ -z "${mdss}" ]; then
-        mdss=$(show_stored ${t}-dump |
-               sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p')
-    fi
+    mdss=$(get_mdss "$(show_stored ${t}-dump.json)" "$(show_stored ${t}-dump)")
     standby_mdss=$(show_stored ${t}-dump.json |
            jq -r '.filesystems[]?.mdsmap.info[]? |
                   select(.state == "up:standby-replay") | "mds." + .name' \
@@ -636,15 +667,10 @@ reset_all_perf_and_sleep() {
 
     info "resetting all perf counters ..."
 
-    mons=$(${CEPH} mon dump 2>/dev/null | sed -nEe 's/^.* (mon\.[^; ]*).*$/\1/p')
-    mgrs=$(${CEPH} mgr dump 2>/dev/null | sed -nEe 's/^.*"active_name": "([^"]*)".*$/mgr.\1/p')
-    mdss=$(${CEPH} fs dump 2>/dev/null | sed -nEe 's/^\[(mds\.[^{]*).*state up:active.*/\1/p')
-    osds=$(${CEPH} osd tree 2>/dev/null | sort -nrk 3 |
-           awk -v max_osds=${ASOK_STATS_MAX_OSDS} '
-               n[$2] < max_osds && $5 == "up" && $6 > 0.1 {
-                   print $4;
-                   n[$2]++;
-               }')
+    mons=$(get_mons "$(${CEPH} mon dump -f json 2>/dev/null)" "$(${CEPH} mon dump 2>/dev/null)")
+    mgrs=$(get_mgrs "" "$(${CEPH} mgr dump 2>/dev/null)")
+    mdss=$(get_mdss "$(${CEPH} fs dump -f json 2>/dev/null)" "$(${CEPH} fs dump 2>/dev/null)")
+    osds=$(get_osds "$(${CEPH} osd tree -f json 2>/dev/null)" "$(${CEPH} osd tree 2>/dev/null)")
 
     for d in ${mons} ${mgrs} ${mdss} ${osds}; do
         ${CEPH} tell ${d} perf reset all > /dev/null 2>&1 &

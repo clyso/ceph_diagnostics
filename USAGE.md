@@ -159,7 +159,7 @@ nohup ./ceph_mds_probe.sh \
     --enable-stats-module \
     --archive \
     -o /var/log/ceph \
-    > /var/log/ceph/probe.log 2>&1 &
+    > /var/log/ceph/mds-probe.out 2>&1 &
 ```
 
 | option | why |

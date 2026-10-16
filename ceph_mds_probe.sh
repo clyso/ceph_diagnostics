@@ -5,10 +5,13 @@
 # mds_max_caps_per_client / max_mds sizing decisions.
 #
 # Centralized: run on any admin node; samples active MDS ranks via
-# `ceph tell`. Methodology: see CephFS-MDS-Profiling-Guide.md.
+# `ceph tell`.
 #
 # Run >= 24h for a baseline; re-run with a different --tag after config
-# changes so the two collections can be compared.
+# changes so the two collections can be compared. Step-by-step
+# instructions for such a run, to hand to whoever runs it:
+# doc/ceph_mds_probe_24h_collection_instructions.md
+# https://github.com/clyso/ceph_diagnostics/blob/main/doc/ceph_mds_probe_24h_collection_instructions.md
 #
 # Every stream runs in its own background worker, so a slow or hung
 # `ceph tell` on one stream (or on one rank) never delays the others.

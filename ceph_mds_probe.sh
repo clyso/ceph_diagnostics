@@ -1419,7 +1419,7 @@ estimate_volume() {
 
     [ "${SPACE_CHECK}" = Y ] || return 0
 
-    avail=$(df -Pk "${OUT_DIR}" 2>/dev/null | awk 'NR == 2 {print $4 * 1024}')
+    avail=$(df -Pk "${OUT_DIR}" 2>/dev/null | awk 'NR == 2 {printf "%.0f", $4 * 1024}')
     [ -n "${avail}" ] || return 0
     info "free space in ${OUT_DIR}: $(human ${avail})"
     # the guard would stop the run at its first check, without packing
